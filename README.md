@@ -17,7 +17,7 @@ The patch script is included in case you want to do it yourself.
    "installMethod": "npm",
    ```
 
-2) Put the `claude.patched` in `PATH`:
+2) Obtain `claude.patched` from [here](https://github.com/a-connoisseur/patch-claude-code/releases) _(or patch it yourself using the script in this repo)_ and put it in `PATH`:
    ```bash
    mv claude.patched `which claude`
    ```
@@ -31,6 +31,8 @@ It:
 - Extracts `cli.js`
 - Applies the patch script
 - Uploads artifact with original + patched files
+
+In case a new version is out and the releases page of this repo has not been updated, you can fork it and run the action manually from the actions tab.
 
 
 ## How it works
