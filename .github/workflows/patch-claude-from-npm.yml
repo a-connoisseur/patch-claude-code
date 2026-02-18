@@ -1,0 +1,85 @@
+name: Patch Claude From npm
+
+on:
+  workflow_dispatch:
+    inputs:
+      package_version:
+        description: "Optional @anthropic-ai/claude-code version (for example: 2.1.45). Leave empty for latest."
+        required: false
+        default: ""
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Resolve package spec
+        id: spec
+        run: |
+          if [ -n "${{ github.event.inputs.package_version }}" ]; then
+            echo "value=@anthropic-ai/claude-code@${{ github.event.inputs.package_version }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=@anthropic-ai/claude-code" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Download and extract npm package
+        id: extract
+        run: |
+          set -euo pipefail
+
+          mkdir -p work/package-extract
+          TARBALL="$(npm pack "${{ steps.spec.outputs.value }}" | tail -n1)"
+          tar -xzf "$TARBALL" -C work/package-extract
+          rm -f "$TARBALL"
+
+          CLI_PATH="$(find work/package-extract/package -type f -name 'cli.js' | head -n1)"
+          if [ -z "$CLI_PATH" ]; then
+            echo "Could not find cli.js in package contents."
+            find work/package-extract/package -maxdepth 4 -type f | head -n 200
+            exit 1
+          fi
+
+          cp "$CLI_PATH" work/claude.original
+          cp "$CLI_PATH" claude
+
+          echo "cli_path=$CLI_PATH" >> "$GITHUB_OUTPUT"
+
+      - name: Apply display patches
+        run: |
+          set -euo pipefail
+          bun patch-claude-display.js --file ./claude
+          cp claude work/claude.patched
+
+      - name: Write metadata
+        run: |
+          set -euo pipefail
+          {
+            echo "package_spec=${{ steps.spec.outputs.value }}"
+            echo "source_cli_path=${{ steps.extract.outputs.cli_path }}"
+            echo "run_id=${{ github.run_id }}"
+            echo "run_attempt=${{ github.run_attempt }}"
+          } > work/metadata.txt
+
+      - name: Upload patched artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: claude-patched-${{ github.run_id }}
+          path: |
+            work/claude.original
+            work/claude.patched
+            work/metadata.txt
