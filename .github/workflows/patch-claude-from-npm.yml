@@ -1,6 +1,8 @@
 name: Patch Claude From npm
 
 on:
+  schedule:
+    - cron: "0 12 * * *"
   workflow_dispatch:
     inputs:
       package_version:
@@ -12,7 +14,7 @@ jobs:
   patch:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
 
     steps:
       - name: Checkout repository
@@ -47,6 +49,9 @@ jobs:
           tar -xzf "$TARBALL" -C work/package-extract
           rm -f "$TARBALL"
 
+          VERSION="$(jq -r .version work/package-extract/package/package.json)"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
           CLI_PATH="$(find work/package-extract/package -type f -name 'cli.js' | head -n1)"
           if [ -z "$CLI_PATH" ]; then
             echo "Could not find cli.js in package contents."
@@ -59,13 +64,28 @@ jobs:
 
           echo "cli_path=$CLI_PATH" >> "$GITHUB_OUTPUT"
 
+      - name: Check if release already exists
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${{ steps.extract.outputs.version }}"
+          if gh release view "v${VERSION}" > /dev/null 2>&1; then
+            echo "Release v${VERSION} already exists, skipping."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Apply display patches
+        if: steps.check.outputs.skip != 'true'
         run: |
           set -euo pipefail
           bun patch-claude-display.js --file ./claude
           cp claude work/claude.patched
 
       - name: Write metadata
+        if: steps.check.outputs.skip != 'true'
         run: |
           set -euo pipefail
           {
@@ -75,11 +95,18 @@ jobs:
             echo "run_attempt=${{ github.run_attempt }}"
           } > work/metadata.txt
 
-      - name: Upload patched artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: claude-patched-${{ github.run_id }}
-          path: |
-            work/claude.original
-            work/claude.patched
+      - name: Create release
+        if: steps.check.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.extract.outputs.version }}"
+          TAG="v${VERSION}"
+
+          gh release create "$TAG" \
+            --title "claude-code ${VERSION}" \
+            --notes "Patched from \`@anthropic-ai/claude-code@${VERSION}\`" \
+            work/claude.original \
+            work/claude.patched \
             work/metadata.txt
