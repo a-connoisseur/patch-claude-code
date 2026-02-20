@@ -13,14 +13,17 @@ Patches Claude Code to:
 The patch script is included in case you want to do it yourself.
 
 ## How to use
-1) Make sure `installMethod` is set to `npm` in `~/.claude.json`:
+1) If you've obtained Claude Code via methods other than `npm`, [uninstall](https://code.claude.com/docs/en/setup#uninstall-claude-code) it.
+2) Install Claude Code via npm: `sudo npm install -g @anthropic-ai/claude-code` (or any other preferred method)
+3) Make sure `installMethod` is set to `npm` in `~/.claude.json`:
    ```json
    "installMethod": "npm",
    ```
 
-2) Obtain `claude.patched` from [here](https://github.com/a-connoisseur/patch-claude-code/releases) _(or patch it yourself using the script in this repo)_ and put it in `PATH`:
+4) Obtain `claude.patched` from [here](https://github.com/a-connoisseur/patch-claude-code/releases) _(or patch it yourself using the script in this repo)_ and put it in `PATH`:
    ```bash
-   mv claude.patched `which claude`
+   chmod a+x claude.patched
+   sudo mv claude.patched `which claude`
    ```
 
 ## GitHub Actions
