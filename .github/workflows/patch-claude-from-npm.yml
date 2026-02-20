@@ -9,6 +9,11 @@ on:
         description: "Optional @anthropic-ai/claude-code version (for example: 2.1.45). Leave empty for latest."
         required: false
         default: ""
+      force:
+        description: "Force patch/release even if base release exists (uses suffix tags like vX-2, vX-3)."
+        required: false
+        default: false
+        type: boolean
 
 jobs:
   patch:
@@ -68,13 +73,35 @@ jobs:
         id: check
         env:
           GH_TOKEN: ${{ github.token }}
+          FORCE_RELEASE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.force || 'false' }}
         run: |
+          set -euo pipefail
+
           VERSION="${{ steps.extract.outputs.version }}"
-          if gh release view "v${VERSION}" > /dev/null 2>&1; then
-            echo "Release v${VERSION} already exists, skipping."
-            echo "skip=true" >> "$GITHUB_OUTPUT"
+          BASE_TAG="v${VERSION}"
+          TAG="$BASE_TAG"
+
+          if gh release view "$BASE_TAG" > /dev/null 2>&1; then
+            if [ "${FORCE_RELEASE}" = "true" ]; then
+              SUFFIX=2
+              TAG="${BASE_TAG}-${SUFFIX}"
+              while gh release view "$TAG" > /dev/null 2>&1; do
+                SUFFIX=$((SUFFIX + 1))
+                TAG="${BASE_TAG}-${SUFFIX}"
+              done
+
+              echo "Release ${BASE_TAG} exists; forcing with tag ${TAG}."
+              echo "skip=false" >> "$GITHUB_OUTPUT"
+              echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+              echo "title=claude-code ${VERSION} (${TAG})" >> "$GITHUB_OUTPUT"
+            else
+              echo "Release ${BASE_TAG} already exists, skipping."
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+            fi
           else
             echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+            echo "title=claude-code ${VERSION}" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Apply display patches
@@ -102,10 +129,11 @@ jobs:
         run: |
           set -euo pipefail
           VERSION="${{ steps.extract.outputs.version }}"
-          TAG="v${VERSION}"
+          TAG="${{ steps.check.outputs.tag }}"
+          TITLE="${{ steps.check.outputs.title }}"
 
           gh release create "$TAG" \
-            --title "claude-code ${VERSION}" \
+            --title "$TITLE" \
             --notes "Patched from \`@anthropic-ai/claude-code@${VERSION}\`" \
             work/claude.original \
             work/claude.patched \

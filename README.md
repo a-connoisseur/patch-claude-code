@@ -7,7 +7,8 @@ Patches Claude Code to:
   
 1) Show tool calls (files read, patterns searched, so on) _without verbose mode_
 2) Show thinking inline _without verbose mode_
-3) Use `bun` instead of `node` by default (Claude Code doesn't work well with node for some people)
+3) Stream thinking while it is generated
+4) Use `bun` instead of `node` by default (Claude Code doesn't work well with node for some people)
 
 The patch script is included in case you want to do it yourself.
 
@@ -48,7 +49,14 @@ In case a new version is out and the releases page of this repo has not been upd
    - Forces `isTranscriptMode:!0`
    - Forces `hideInTranscript:!1` when present
    - Removes early `case"thinking"` guard that returns `null`
-4. Installer warning text:
+4. Thinking streaming:
+   - Wires `streamingThinking` into the main prompt renderer path
+   - Uses `N?.thinking` as memo cache key in the streaming thinking JSX gate
+   - Disables `L5q=ck.memo(ooY,AsY)` row memoization for reliable per-delta repaint
+   - Updates `WG6` stream event handling to reset on request start and append `thinking_delta` text live
+   - Clears transient streamed-thinking state on `message_stop` (inline final thinking remains in message flow)
+   - Removes the 30s post-stop linger window logic
+5. Installer warning text:
    - Replaces the full npm/native-installer warning string with `"(patched)"`
 
 ## Usage

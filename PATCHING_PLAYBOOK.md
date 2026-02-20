@@ -4,7 +4,8 @@ This playbook covers both desired behaviors for future Claude Code updates:
 
 1. Always show detailed tool calls (no "Read X files" collapsed summary)
 2. Always show thinking inline (no hidden thinking)
-3. Replace npm-installer migration warning text with `"(patched)"`
+3. Stream thinking while it is generated (not only after the block completes)
+4. Replace npm-installer migration warning text with `"(patched)"`
 
 ## Fast Path
 
@@ -57,7 +58,19 @@ Patch:
 
 Result: thinking blocks render inline consistently.
 
-### 3) NPM migration warning text
+### 3) Thinking streaming
+
+Patch both behaviors in message rendering:
+
+1. In the `RY6` prompt renderer call, pass through `streamingThinking` (same variable used by transcript mode).
+2. In the `KsY` memoized cache gate for `H1` thinking JSX, compare/store `N?.thinking` instead of `N`.
+3. Replace `L5q=ck.memo(ooY,AsY)` with `L5q=ooY` so message rows repaint for streaming deltas.
+4. In `WG6` stream handling, reset streaming thinking on `stream_request_start`, append on `thinking_delta`, and clear transient state on `message_stop`.
+5. Remove the `streamingEndedAt<30000` window so the transient stream block is active only while streaming.
+
+Result: thinking text updates per delta while streaming, instead of only after completion.
+
+### 4) NPM migration warning text
 
 Target: the long notification string containing:
 
@@ -81,6 +94,24 @@ node -e 'const fs=require("fs");const s=fs.readFileSync("claude","utf8");console
 
 If `hideInTranscript` does not exist in a version, the third check may be `false` and that is acceptable.
 
+Thinking streaming checks:
+
+```bash
+node -e 'const fs=require("fs");const s=fs.readFileSync("claude","utf8");console.log("streaming memo compares thinking text:",s.includes("q[79]!==N?.thinking"));console.log("prompt renderer receives streamingThinking:",/createElement\\(RY6,\\{[^}]*toolJSX:[^}]*streamingToolUses:[^}]*streamingThinking:[^}]*\\}\\)/.test(s));'
+```
+
+```bash
+node -e 'const fs=require("fs");const s=fs.readFileSync("claude","utf8");console.log("row memo disabled:",s.includes("L5q=ooY")&&!s.includes("L5q=ck.memo(ooY,AsY)"));'
+```
+
+```bash
+node -e 'const fs=require("fs");const s=fs.readFileSync("claude","utf8");console.log("WG6 resets streamingThinking:",/type===\"stream_request_start\"\\)\\{[^}]{0,180}\\?\\.\\(null\\),[^}]{0,120}\\(\"requesting\"\\)/.test(s));console.log("WG6 thinking deltas update streamingThinking:",/case\"thinking_delta\":[\\s\\S]{0,220}\\?\\.\\(\\(H\\)=>\\(\\{thinking:\\(H\\?\\.thinking\\?\\?\"\"\\)\\+/.test(s));'
+```
+
+```bash
+node -e 'const fs=require("fs");const s=fs.readFileSync("claude","utf8");console.log("inline case thinking renderer present:",/case\"thinking\":\\{[^}]{0,700}createElement\\(yW1,\\{/.test(s));console.log("transient streamed-thinking renderer present:",/x&&N&&GH\\.createElement\\(h,\\{marginTop:1\\},GH\\.createElement\\(yW1,\\{param:\\{type:\"thinking\",thinking:N\\.thinking\\}/.test(s));console.log("no post-stop linger window:",!/streamingEndedAt<30000/.test(s));'
+```
+
 ## If a Future Update Breaks the Script
 
 1. Find candidate tool renderer blocks:
@@ -96,6 +127,7 @@ node -e 'const fs=require("fs");const s=fs.readFileSync("claude","utf8");let i=-
 3. Update the script matching logic in `patch-claude-display.js`:
    - `patchCollapsedReadSearch()`
    - `patchThinkingCase()`
+   - `patchThinkingStreaming()`
 
 4. Re-run dry-run first:
 ```bash
@@ -110,5 +142,5 @@ Use this exact instruction:
 
 ```text
 Patch the current claude JS using PATCHING_PLAYBOOK.md.
-Apply both display patches (tool calls verbose + thinking inline), run verification, and report what changed.
+Apply display patches (tool calls verbose + thinking inline + thinking streaming), run verification, and report what changed.
 ```
