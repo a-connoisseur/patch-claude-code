@@ -26,6 +26,10 @@ The patch script is included in case you want to do it yourself.
    sudo mv claude.patched `which claude`
    ```
 
+## How can I trust this?
+It takes Claude Code from npm, published by Anthropic, and runs a patch script on it which you can find in this repository. The release is created by Github Actions. You're also free to patch it yourself on your own machine.
+
+
 ## GitHub Actions
 
 Manual workflow: `.github/workflows/patch-claude-from-npm.yml`
