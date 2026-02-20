@@ -23,7 +23,8 @@ The patch script is included in case you want to do it yourself.
 4) Obtain `claude.patched` from [here](https://github.com/a-connoisseur/patch-claude-code/releases) _(or patch it yourself using the script in this repo)_ and put it in `PATH`:
    ```bash
    chmod a+x claude.patched
-   sudo mv claude.patched `which claude`
+   sudo mv claude.patched sudo mv claude /opt/homebrew/lib/node_modules/@anthropic-ai/claude-code/cli.js
+   # if not on macOS, check what `which claude` points to, and copy it there instead
    ```
 
 ## How can I trust this?
