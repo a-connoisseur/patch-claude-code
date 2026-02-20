@@ -62,10 +62,10 @@ Result: thinking blocks render inline consistently.
 
 Patch both behaviors in message rendering:
 
-1. In the `RY6` prompt renderer call, pass through `streamingThinking` (same variable used by transcript mode).
-2. In the `KsY` memoized cache gate for `H1` thinking JSX, compare/store `N?.thinking` instead of `N`.
-3. Replace `L5q=ck.memo(ooY,AsY)` with `L5q=ooY` so message rows repaint for streaming deltas.
-4. In `WG6` stream handling, reset streaming thinking on `stream_request_start`, append on `thinking_delta`, and clear transient state on `message_stop`.
+1. In the main non-transcript renderer call (identified by props such as `toolJSX`, `streamingToolUses`, `agentDefinitions`, `onOpenRateLimitOptions`), pass through `streamingThinking`.
+2. In the streaming-thinking memo cache gate, compare/store by `?.thinking` text instead of object identity.
+3. Replace message-row `memo(...)` wrapping by comparator-shape matching (checks like `screen`, `columns`, `lastThinkingBlockId`, `streamingToolUseIDs`), not symbol names.
+4. In stream-event handling, reset thinking state on `stream_request_start`, append on `thinking_delta`, and clear transient state on `message_stop`.
 5. Remove the `streamingEndedAt<30000` window so the transient stream block is active only while streaming.
 
 Result: thinking text updates per delta while streaming, instead of only after completion.
@@ -97,19 +97,19 @@ If `hideInTranscript` does not exist in a version, the third check may be `false
 Thinking streaming checks:
 
 ```bash
-node -e 'const fs=require("fs");const s=fs.readFileSync("claude","utf8");console.log("streaming memo compares thinking text:",s.includes("q[79]!==N?.thinking"));console.log("prompt renderer receives streamingThinking:",/createElement\\(RY6,\\{[^}]*toolJSX:[^}]*streamingToolUses:[^}]*streamingThinking:[^}]*\\}\\)/.test(s));'
+node -e 'const fs=require("fs");const s=fs.readFileSync("claude","utf8");console.log("prompt renderer receives streamingThinking:",/createElement\\([A-Za-z_$][\\w$]*,\\{[^}]*toolJSX:[^}]*streamingToolUses:[^}]*streamingThinking:[^}]*\\}\\)/.test(s));console.log("streaming memo compares thinking text:",/\\?\\.thinking/.test(s));'
 ```
 
 ```bash
-node -e 'const fs=require("fs");const s=fs.readFileSync("claude","utf8");console.log("row memo disabled:",s.includes("L5q=ooY")&&!s.includes("L5q=ck.memo(ooY,AsY)"));'
+node -e 'const fs=require("fs");const s=fs.readFileSync("claude","utf8");console.log("row comparator still present (shape anchor):",s.includes(".lastThinkingBlockId")&&s.includes(".streamingToolUseIDs"));console.log("no 30s linger window:",!/streamingEndedAt<30000/.test(s));'
 ```
 
 ```bash
-node -e 'const fs=require("fs");const s=fs.readFileSync("claude","utf8");console.log("WG6 resets streamingThinking:",/type===\"stream_request_start\"\\)\\{[^}]{0,180}\\?\\.\\(null\\),[^}]{0,120}\\(\"requesting\"\\)/.test(s));console.log("WG6 thinking deltas update streamingThinking:",/case\"thinking_delta\":[\\s\\S]{0,220}\\?\\.\\(\\(H\\)=>\\(\\{thinking:\\(H\\?\\.thinking\\?\\?\"\"\\)\\+/.test(s));'
+node -e 'const fs=require("fs");const s=fs.readFileSync("claude","utf8");console.log("stream handler resets on request start:",/type===\"stream_request_start\"\\)\\{[^}]{0,180}\\?\\.\\(null\\),[^}]{0,120}\\(\"requesting\"\\)/.test(s));console.log("thinking deltas update streaming state:",/case\"thinking_delta\":[\\s\\S]{0,260}isStreaming:!0/.test(s));console.log("stream state clears on message stop:",/event\\.type===\"message_stop\"\\)\\{[^}]{0,220}\\?\\.\\(null\\),[^}]{0,120}\\(\"tool-use\"\\)/.test(s));'
 ```
 
 ```bash
-node -e 'const fs=require("fs");const s=fs.readFileSync("claude","utf8");console.log("inline case thinking renderer present:",/case\"thinking\":\\{[^}]{0,700}createElement\\(yW1,\\{/.test(s));console.log("transient streamed-thinking renderer present:",/x&&N&&GH\\.createElement\\(h,\\{marginTop:1\\},GH\\.createElement\\(yW1,\\{param:\\{type:\"thinking\",thinking:N\\.thinking\\}/.test(s));console.log("no post-stop linger window:",!/streamingEndedAt<30000/.test(s));'
+node -e 'const fs=require("fs");const s=fs.readFileSync("claude","utf8");console.log("inline thinking renderer present:",/case\"thinking\":\\{[^}]{0,900}createElement\\([A-Za-z_$][\\w$]*,\\{[^}]*isTranscriptMode:!0/.test(s));console.log("transient streamed-thinking renderer present:",/createElement\\([A-Za-z_$][\\w$]*,\\{marginTop:1\\},[A-Za-z_$][\\w$]*\\.createElement\\([A-Za-z_$][\\w$]*,\\{param:\\{type:\"thinking\",thinking:[A-Za-z_$][\\w$]*\\.thinking\\}/.test(s));'
 ```
 
 ## If a Future Update Breaks the Script

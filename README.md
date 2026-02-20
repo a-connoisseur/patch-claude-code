@@ -50,10 +50,10 @@ In case a new version is out and the releases page of this repo has not been upd
    - Forces `hideInTranscript:!1` when present
    - Removes early `case"thinking"` guard that returns `null`
 4. Thinking streaming:
-   - Wires `streamingThinking` into the main prompt renderer path
-   - Uses `N?.thinking` as memo cache key in the streaming thinking JSX gate
-   - Disables `L5q=ck.memo(ooY,AsY)` row memoization for reliable per-delta repaint
-   - Updates `WG6` stream event handling to reset on request start and append `thinking_delta` text live
+   - Wires `streamingThinking` into the main non-transcript renderer call by prop-shape matching
+   - Uses a name-agnostic memo-cache rewrite so streaming keys track `?.thinking` text
+   - Disables message-row memoization via comparator-shape matching (not symbol names)
+   - Patches stream-event handling via stable event literals (`stream_request_start`, `thinking_delta`, `message_stop`)
    - Clears transient streamed-thinking state on `message_stop` (inline final thinking remains in message flow)
    - Removes the 30s post-stop linger window logic
 5. Installer warning text:

@@ -167,17 +167,17 @@ function patchThinkingStreaming(content) {
   let memoPatched = 0;
 
   const streamingMemoPattern =
-    /if\(q\[(\d+)\]!==([A-Za-z_$][\w$]*)\|\|q\[(\d+)\]!==([A-Za-z_$][\w$]*)\|\|q\[(\d+)\]!==([A-Za-z_$][\w$]*)\)([\s\S]{0,700}?thinking:\4\.thinking[\s\S]{0,700}?)q\[\1\]=\2,q\[\3\]=\4,q\[\5\]=\6,(q\[\d+\]=[A-Za-z_$][\w$]*;)/g;
+    /if\(([A-Za-z_$][\w$]*)\[(\d+)\]!==([A-Za-z_$][\w$]*)\|\|\1\[(\d+)\]!==([A-Za-z_$][\w$]*)\|\|\1\[(\d+)\]!==([A-Za-z_$][\w$]*)\)([\s\S]{0,700}?thinking:\5\.thinking[\s\S]{0,700}?)\1\[\2\]=\3,\1\[\4\]=\5,\1\[\6\]=\7,(\1\[\d+\]=[A-Za-z_$][\w$]*;)/g;
 
   output = output.replace(
     streamingMemoPattern,
-    (full, i1, v1, i2, v2, i3, v3, middle, tail) => {
+    (full, cacheVar, i1, v1, i2, v2, i3, v3, middle, tail) => {
       memoCandidates += 1;
       if (full.includes(`${v2}?.thinking`)) {
         return full;
       }
 
-      const replacement = `if(q[${i1}]!==${v1}||q[${i2}]!==${v2}?.thinking||q[${i3}]!==${v3})${middle}q[${i1}]=${v1},q[${i2}]=${v2}?.thinking,q[${i3}]=${v3},${tail}`;
+      const replacement = `if(${cacheVar}[${i1}]!==${v1}||${cacheVar}[${i2}]!==${v2}?.thinking||${cacheVar}[${i3}]!==${v3})${middle}${cacheVar}[${i1}]=${v1},${cacheVar}[${i2}]=${v2}?.thinking,${cacheVar}[${i3}]=${v3},${tail}`;
       if (replacement !== full) {
         memoPatched += 1;
         return replacement;
@@ -195,9 +195,9 @@ function patchThinkingStreaming(content) {
 
   if (streamingVarMatch) {
     const streamingVar = streamingVarMatch[1];
-    const rY6CallPattern = /createElement\(RY6,\{([^{}]*?)\}\)/g;
+    const createElementCallPattern = /createElement\(([A-Za-z_$][\w$]*),\{([^{}]*?)\}\)/g;
 
-    output = output.replace(rY6CallPattern, (full, props) => {
+    output = output.replace(createElementCallPattern, (full, component, props) => {
       if (!props.includes("streamingToolUses:")) {
         return full;
       }
@@ -210,12 +210,15 @@ function patchThinkingStreaming(content) {
       if (!props.includes("agentDefinitions:") || !props.includes("onOpenRateLimitOptions:")) {
         return full;
       }
-      if (/screen:\s*["']transcript["']/.test(props)) {
+      if (props.includes("hidePastThinking:")) {
+        return full;
+      }
+      if (!props.includes("screenToggleId:") || !props.includes("conversationId:")) {
         return full;
       }
 
       propCandidates += 1;
-      const replacement = `createElement(RY6,{${props},streamingThinking:${streamingVar}})`;
+      const replacement = `createElement(${component},{${props},streamingThinking:${streamingVar}})`;
       if (replacement !== full) {
         propPatched += 1;
         return replacement;
@@ -227,18 +230,38 @@ function patchThinkingStreaming(content) {
   candidates += propCandidates;
   patched += propPatched;
 
-  // Disable memo wrapper around per-message row renderer. In some builds,
-  // the custom comparator suppresses thinking_delta repaints until block end.
-  const rowMemoNeedle = "L5q=ck.memo(ooY,AsY)";
-  const rowMemoReplacement = "L5q=ooY";
-  const rowMemoCandidates = (output.match(/L5q=ck\.memo\(ooY,AsY\)/g) || []).length;
-  if (rowMemoCandidates > 0) {
-    const next = output.replace(/L5q=ck\.memo\(ooY,AsY\)/g, rowMemoReplacement);
-    if (next !== output) {
-      output = next;
-      patched += rowMemoCandidates;
+  // Disable memo wrapper around message-row renderer. Match by comparator body
+  // shape (screen/columns/lastThinkingBlockId checks), not by minified symbol
+  // names, so this survives variable renaming across releases.
+  const memoAssignPattern = /([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\.memo\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\)/g;
+  let memoMatch;
+  while ((memoMatch = memoAssignPattern.exec(output)) !== null) {
+    const [full, lhs, _reactNs, renderFn, comparatorFn] = memoMatch;
+    const comparatorStart = output.indexOf(`function ${comparatorFn}(`);
+    if (comparatorStart === -1) {
+      continue;
     }
-    candidates += rowMemoCandidates;
+
+    const comparatorSlice = output.slice(comparatorStart, comparatorStart + 2200);
+    const looksLikeRowComparator =
+      comparatorSlice.includes(".screen!==") &&
+      comparatorSlice.includes(".columns!==") &&
+      comparatorSlice.includes(".lastThinkingBlockId") &&
+      comparatorSlice.includes(".streamingToolUseIDs");
+
+    if (!looksLikeRowComparator) {
+      continue;
+    }
+
+    candidates += 1;
+    const replacement = `${lhs}=${renderFn}`;
+    if (replacement !== full) {
+      output = `${output.slice(0, memoMatch.index)}${replacement}${output.slice(
+        memoMatch.index + full.length
+      )}`;
+      patched += 1;
+      memoAssignPattern.lastIndex = memoMatch.index + replacement.length;
+    }
   }
 
   // In some builds the streaming snippet remains visible for 30s after message
@@ -246,8 +269,8 @@ function patchThinkingStreaming(content) {
   let lingerCandidates = 0;
   let lingerPatched = 0;
   const lingerPattern =
-    /A:\{if\(!([A-Za-z_$][\w$]*)\)\{([A-Za-z_$][\w$]*)=!1;break A\}if\(\1\.isStreaming\)\{\2=!0;break A\}if\(\1\.streamingEndedAt\)\{\2=Date\.now\(\)-\1\.streamingEndedAt<30000;break A\}\2=!1\}let ([A-Za-z_$][\w$]*)=\2/g;
-  output = output.replace(lingerPattern, (_full, streamVar, _tmpVar, visibleVar) => {
+    /([A-Za-z_$][\w$]*):\{if\(!([A-Za-z_$][\w$]*)\)\{([A-Za-z_$][\w$]*)=!1;break \1\}if\(\2\.isStreaming\)\{\3=!0;break \1\}if\(\2\.streamingEndedAt\)\{\3=Date\.now\(\)-\2\.streamingEndedAt<30000;break \1\}\3=!1\}let ([A-Za-z_$][\w$]*)=\3/g;
+  output = output.replace(lingerPattern, (_full, _label, streamVar, _tmpVar, visibleVar) => {
     lingerCandidates += 1;
     lingerPatched += 1;
     return `let ${visibleVar}=!!(${streamVar}&&${streamVar}.isStreaming)`;
@@ -258,12 +281,20 @@ function patchThinkingStreaming(content) {
   // Ensure streaming thinking state is reset and updated from thinking deltas.
   // Without this, some builds keep stale previous-turn thinking and only show
   // final thinking text after completion.
-  const wg6Start = output.indexOf("function WG6(");
-  if (wg6Start !== -1) {
-    const wg6End = output.indexOf("function Ob(", wg6Start);
-    if (wg6End !== -1) {
+  const streamEventAnchor = 'type!=="stream_event"&&';
+  const streamRequestAnchor = 'type==="stream_request_start"';
+  const thinkingDeltaAnchor = 'case"thinking_delta"';
+  const anchorIndex = output.indexOf(streamEventAnchor);
+  if (
+    anchorIndex !== -1 &&
+    output.indexOf(streamRequestAnchor, anchorIndex) !== -1 &&
+    output.indexOf(thinkingDeltaAnchor, anchorIndex) !== -1
+  ) {
+    const wg6Start = output.lastIndexOf("function ", anchorIndex);
+    const wg6End = output.indexOf("function ", anchorIndex + streamEventAnchor.length);
+    if (wg6Start !== -1 && wg6End !== -1) {
       const wg6Segment = output.slice(wg6Start, wg6End);
-      const signatureMatch = wg6Segment.match(/^function WG6\(([^)]*)\)\{/);
+      const signatureMatch = wg6Segment.match(/^function [A-Za-z_$][\w$]*\(([^)]*)\)\{/);
 
       if (signatureMatch) {
         const params = signatureMatch[1].split(",").map((param) => param.trim());
