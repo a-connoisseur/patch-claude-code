@@ -2,7 +2,7 @@ name: Patch Claude From npm
 
 on:
   schedule:
-    - cron: "0 12 * * *"
+    - cron: "0 */6 * * *"
   workflow_dispatch:
     inputs:
       package_version:
