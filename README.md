@@ -40,7 +40,7 @@ It:
 - Applies the patch script
 - Uploads artifact with original + patched files
 
-Runs every 12 hours, but in case a new version is out and the releases page of this repo has not been updated, you can fork it and run the action yourself, manually, from the actions tab.
+Runs every 6 hours, but in case a new version is out and the releases page of this repo has not been updated, you can fork it and run the action yourself, manually, from the actions tab.
 
 
 ## How it works
