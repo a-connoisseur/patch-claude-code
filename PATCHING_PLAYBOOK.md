@@ -5,7 +5,8 @@ This playbook covers both desired behaviors for future Claude Code updates:
 1. Always show detailed tool calls (no "Read X files" collapsed summary)
 2. Always show thinking inline (no hidden thinking)
 3. Stream thinking while it is generated (not only after the block completes)
-4. Replace npm-installer migration warning text with `"(patched)"`
+4. Show add-only write results with diff-style coloring (green `+` lines)
+5. Replace npm-installer migration warning text with `"(patched)"`
 
 ## Fast Path
 
@@ -20,12 +21,18 @@ Optional modes:
 ```bash
 node patch-claude-display.js --file ./claude --dry-run
 node patch-claude-display.js --file ./claude --restore
-node patch-claude-display.js --file ./claude --no-thinking
+node patch-claude-display.js --file ./claude --no-inline-thinking
+node patch-claude-display.js --file ./claude --no-colored-additions
+node patch-claude-display.js --file ./claude --only-colored-additions
 ```
 
 The script creates a one-time backup at `./claude.display.backup`.
 
-`--no-thinking` skips both thinking visibility and thinking streaming patches, while still applying non-thinking display patches.
+`--no-inline-thinking` skips both thinking visibility and thinking streaming patches, while still applying non-thinking display patches.
+
+`--no-colored-additions` skips the created-file diff-color patch.
+
+`--only-colored-additions` applies only the created-file diff-color patch.
 
 ## What It Patches
 
@@ -61,7 +68,30 @@ Patch:
 
 Result: thinking blocks render inline consistently.
 
-### 3) Thinking streaming
+### 3) Created-file diff coloring
+
+Target shape:
+
+```js
+case"create": ... return createElement(QIY,{filePath:A,content:q,verbose:v})
+case"update": return createElement(AG1,{filePath:A,structuredPatch:K,...})
+```
+
+Patch:
+
+```js
+case"create": ... return createElement(AG1,{
+  filePath:A,
+  structuredPatch:[{oldStart:1,oldLines:0,newStart:1,newLines:Wl4(q),lines:q===""?[]:q.split(`\n`).map((L)=>"+"+L)}],
+  firstLine:q.split(`\n`)[0]??null,
+  fileContent:"",
+  ...
+})
+```
+
+Result: file-creation output renders through the diff component, so added lines get the same green/red diff palette as edit/write updates.
+
+### 4) Thinking streaming
 
 Patch both behaviors in message rendering:
 
@@ -73,7 +103,7 @@ Patch both behaviors in message rendering:
 
 Result: thinking text updates per delta while streaming, instead of only after completion.
 
-### 4) NPM migration warning text
+### 5) NPM migration warning text
 
 Target: the long notification string containing:
 
@@ -96,6 +126,12 @@ node -e 'const fs=require("fs");const s=fs.readFileSync("claude","utf8");console
 ```
 
 If `hideInTranscript` does not exist in a version, the third check may be `false` and that is acceptable.
+
+Created-file diff coloring check:
+
+```bash
+node -e 'const fs=require("fs");const s=fs.readFileSync("claude","utf8");console.log("write create uses diff renderer:",/case\"create\":[\\s\\S]{0,900}?structuredPatch:\[\{oldStart:1,oldLines:0,newStart:1/.test(s));'
+```
 
 Thinking streaming checks:
 

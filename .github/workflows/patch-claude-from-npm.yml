@@ -30,11 +30,6 @@ jobs:
         with:
           node-version: "20"
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
-
       - name: Resolve package spec
         id: spec
         run: |
@@ -108,11 +103,14 @@ jobs:
         if: steps.check.outputs.skip != 'true'
         run: |
           set -euo pipefail
-          bun patch-claude-display.js --file ./claude
-          cp claude work/claude.patched
+          cp work/claude.original work/claude.patched
+          node patch-claude-display.js --file ./work/claude.patched --no-colored-additions
 
-          cp work/claude.original work/claude.no-thinking.patched
-          bun patch-claude-display.js --file ./work/claude.no-thinking.patched --no-thinking
+          cp work/claude.original work/claude.no-inline-thinking.patched
+          node patch-claude-display.js --file ./work/claude.no-inline-thinking.patched --no-inline-thinking --no-colored-additions
+
+          cp work/claude.original work/claude.colored-additions.patched
+          node patch-claude-display.js --file ./work/claude.colored-additions.patched
 
       - name: Write metadata
         if: steps.check.outputs.skip != 'true'
@@ -138,7 +136,8 @@ jobs:
           gh release create "$TAG" \
             --title "$TITLE" \
             --notes "Patched from \`@anthropic-ai/claude-code@${VERSION}\`" \
+            work/metadata.txt \
             work/claude.original \
             work/claude.patched \
-            work/claude.no-thinking.patched \
-            work/metadata.txt
+            work/claude.no-inline-thinking.patched \
+            work/claude.colored-additions.patched

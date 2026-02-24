@@ -2,9 +2,10 @@
 
 This repo contains a patcher for Claude Code's bundled JS file (`claude` / `cli.js`).
 
-Releases include two patched binaries:
-- `claude.patched` (tool calls + inline/streaming thinking)
-- `claude.no-thinking.patched` (tool calls patches only, no thinking display patches)
+Releases include three patched binaries:
+- `claude.patched` (all patches except created-file diff colors)
+- `claude.no-inline-thinking.patched` (all patches except thinking visibility/streaming and created-file diff colors)
+- `claude.colored-additions.patched` (all patches, including created-file diff colors)
 
 ## What it does
 Patches Claude Code to:
@@ -12,7 +13,8 @@ Patches Claude Code to:
 1) Show tool calls (files read, patterns searched, so on) _without verbose mode_
 2) Show thinking inline _without verbose mode_
 3) Stream thinking while it is generated
-4) Use `bun` instead of `node` by default (Claude Code doesn't work well with node for some people)
+4) Show add-only write results using diff-style coloring (green `+` lines)
+5) Use `bun` instead of `node` by default (Claude Code doesn't work well with node for some people)
 
 The patch script is included in case you want to do it yourself.
 
@@ -30,7 +32,7 @@ The patch script is included in case you want to do it yourself.
    sudo mv claude.patched $(readlink -f $(which claude))
    ```
 
-   If you do not want thinking patches, use `claude.no-thinking.patched` instead.
+   If you want all patches including created-file diff colors, use `claude.colored-additions.patched`.
 
 ## How can I trust this?
 It takes Claude Code from npm, published by Anthropic, and runs a patch script on it which you can find in this repository. The release is created by Github Actions. You're also free to patch it yourself on your own machine.
@@ -43,8 +45,8 @@ Manual workflow: `.github/workflows/patch-claude-from-npm.yml`
 It:
 - Downloads `@anthropic-ai/claude-code` from npm
 - Extracts `cli.js`
-- Applies the patch script in two modes (default and `--no-thinking`)
-- Uploads artifact with original + both patched files
+- Applies the patch script in three modes (`--no-colored-additions`, `--no-inline-thinking --no-colored-additions`, and default full patch)
+- Uploads release assets with metadata + original + three patched files
 
 Runs every 6 hours, but in case a new version is out and the releases page of this repo has not been updated, you can fork it and run the action yourself, manually, from the actions tab.
 
@@ -58,18 +60,21 @@ Runs every 6 hours, but in case a new version is out and the releases page of th
 2. Tool call visibility:
    - Forces `collapsed_read_search` groups to render with `verbose:!0`
    - Prevents collapsed summaries like "Read X files"
-3. Thinking visibility:
+3. Created-file diff coloring:
+   - Rewrites write-result `case"create"` rendering to use the same diff renderer as updates
+   - Synthesizes a one-hunk `structuredPatch` with `+` lines for new file content
+4. Thinking visibility:
    - Forces `isTranscriptMode:!0`
    - Forces `hideInTranscript:!1` when present
    - Removes early `case"thinking"` guard that returns `null`
-4. Thinking streaming:
+5. Thinking streaming:
    - Wires `streamingThinking` into the main non-transcript renderer call by prop-shape matching
    - Uses a name-agnostic memo-cache rewrite so streaming keys track `?.thinking` text
    - Disables message-row memoization via comparator-shape matching (not symbol names)
    - Patches stream-event handling via stable event literals (`stream_request_start`, `thinking_delta`, `message_stop`)
    - Clears transient streamed-thinking state on `message_stop` (inline final thinking remains in message flow)
    - Removes the 30s post-stop linger window logic
-5. Installer warning text:
+6. Installer warning text:
    - Replaces the full npm/native-installer warning string with `"(patched)"`
 
 ## Usage
@@ -92,10 +97,22 @@ Dry run:
 bun patch-claude-display.js --dry-run
 ```
 
-No-thinking variant (skip inline/streaming thinking patches):
+No-inline-thinking variant (skip inline/streaming thinking patches):
 
 ```bash
-bun patch-claude-display.js --no-thinking
+bun patch-claude-display.js --no-inline-thinking
+```
+
+No-colored-additions variant (skip created-file diff-color patch):
+
+```bash
+bun patch-claude-display.js --no-colored-additions
+```
+
+Colored-additions-only variant (only patch created-file diff coloring):
+
+```bash
+bun patch-claude-display.js --only-colored-additions
 ```
 
 Restore backup:

@@ -1,5 +1,3 @@
-#!/usr/bin/env bun
-
 const fs = require("fs");
 const path = require("path");
 
@@ -9,14 +7,17 @@ function printHelp() {
   console.log("");
   console.log("Usage:");
   console.log(
-    "  node patch-claude-display.js [--file <path>] [--dry-run] [--restore] [--no-thinking]"
+    "  node patch-claude-display.js [--file <path>] [--dry-run] [--restore] [--no-inline-thinking|--no-thinking] [--no-colored-additions] [--only-colored-additions]"
   );
   console.log("");
   console.log("Options:");
   console.log("  --file <path>   Target Claude JS file (auto-uses ./claude when present)");
   console.log("  --dry-run       Show what would change without writing");
   console.log("  --restore       Restore from backup");
-  console.log("  --no-thinking   Skip all thinking visibility/streaming patches");
+  console.log("  --no-inline-thinking  Skip all thinking visibility/streaming patches");
+  console.log("  --no-thinking         Alias for --no-inline-thinking");
+  console.log("  --no-colored-additions  Skip created-file diff-color patch");
+  console.log("  --only-colored-additions  Apply only created-file diff-color patch");
   console.log("  --help, -h      Show this help");
 }
 
@@ -25,7 +26,9 @@ function parseArgs(argv) {
     file: null,
     dryRun: false,
     restore: false,
-    noThinking: false,
+    noInlineThinking: false,
+    noColoredAdditions: false,
+    onlyColoredAdditions: false,
     help: false,
   };
 
@@ -42,8 +45,12 @@ function parseArgs(argv) {
       opts.dryRun = true;
     } else if (arg === "--restore") {
       opts.restore = true;
-    } else if (arg === "--no-thinking") {
-      opts.noThinking = true;
+    } else if (arg === "--no-thinking" || arg === "--no-inline-thinking") {
+      opts.noInlineThinking = true;
+    } else if (arg === "--no-colored-additions") {
+      opts.noColoredAdditions = true;
+    } else if (arg === "--only-colored-additions") {
+      opts.onlyColoredAdditions = true;
     } else if (arg === "--help" || arg === "-h") {
       opts.help = true;
     } else {
@@ -98,6 +105,98 @@ function patchCollapsedReadSearch(content) {
 
   return {
     content: updated,
+    candidates,
+    patched,
+  };
+}
+
+function patchWriteCreateDiffColors(content) {
+  const createNeedle = 'case"create":';
+  const updateNeedle = 'case"update":';
+
+  let index = 0;
+  let candidates = 0;
+  let patched = 0;
+  let output = content;
+
+  while (true) {
+    const createStart = output.indexOf(createNeedle, index);
+    if (createStart === -1) {
+      break;
+    }
+
+    const updateStart = output.indexOf(updateNeedle, createStart + createNeedle.length);
+    if (updateStart === -1) {
+      index = createStart + createNeedle.length;
+      continue;
+    }
+
+    const nextCase = output.indexOf('case"', updateStart + updateNeedle.length);
+    const nextDefault = output.indexOf("default:", updateStart + updateNeedle.length);
+    const endCandidates = [nextCase, nextDefault].filter((value) => value !== -1);
+    const switchEnd = endCandidates.length > 0 ? Math.min(...endCandidates) : output.length;
+
+    const createSegment = output.slice(createStart, updateStart);
+    const updateSegment = output.slice(updateStart, switchEnd);
+
+    if (createSegment.includes("structuredPatch:[{oldStart:1,oldLines:0,newStart:1")) {
+      index = updateStart + updateNeedle.length;
+      continue;
+    }
+
+    const createReturnMatch = createSegment.match(
+      /return ([A-Za-z_$][\w$]*)\.createElement\(([A-Za-z_$][\w$]*),\{filePath:([A-Za-z_$][\w$]*),content:([A-Za-z_$][\w$]*),verbose:([A-Za-z_$][\w$]*)\}\)/
+    );
+    if (!createReturnMatch) {
+      index = updateStart + updateNeedle.length;
+      continue;
+    }
+
+    const updateRendererMatch = updateSegment.match(
+      /createElement\(([A-Za-z_$][\w$]*),\{filePath:[^}]*structuredPatch:[^}]*style:([A-Za-z_$][\w$]*),verbose:[A-Za-z_$][\w$]*/
+    );
+    if (!updateRendererMatch) {
+      index = updateStart + updateNeedle.length;
+      continue;
+    }
+
+    candidates += 1;
+
+    const reactNs = createReturnMatch[1];
+    const fileVar = createReturnMatch[3];
+    const contentVar = createReturnMatch[4];
+    const verboseVar = createReturnMatch[5];
+    const diffRenderer = updateRendererMatch[1];
+    const styleVar = updateRendererMatch[2];
+
+    const lineCounterMatch = createSegment.match(
+      /let [A-Za-z_$][\w$]*=([A-Za-z_$][\w$]*)\([A-Za-z_$][\w$]*\);return [A-Za-z_$][\w$]*\.createElement\([A-Za-z_$][\w$]*,null,"Wrote "/
+    );
+    const lineCountExpr = lineCounterMatch
+      ? `${lineCounterMatch[1]}(${contentVar})`
+      : `${contentVar}===""?0:${contentVar}.split(\`\\n\`).length`;
+
+    const before = createReturnMatch[0];
+    const after = `return ${reactNs}.createElement(${diffRenderer},{filePath:${fileVar},structuredPatch:[{oldStart:1,oldLines:0,newStart:1,newLines:${lineCountExpr},lines:${contentVar}===""?[]:${contentVar}.split(\`\\n\`).map((__cc_line)=>"+"+__cc_line)}],firstLine:${contentVar}.split(\`\\n\`)[0]??null,fileContent:"",style:${styleVar},verbose:${verboseVar},previewHint:void 0})`;
+
+    if (!createSegment.includes(before)) {
+      index = updateStart + updateNeedle.length;
+      continue;
+    }
+
+    const nextCreateSegment = createSegment.replace(before, after);
+    if (nextCreateSegment !== createSegment) {
+      patched += 1;
+      output = output.slice(0, createStart) + nextCreateSegment + output.slice(updateStart);
+      index = createStart + nextCreateSegment.length;
+      continue;
+    }
+
+    index = updateStart + updateNeedle.length;
+  }
+
+  return {
+    content: output,
     candidates,
     patched,
   };
@@ -434,6 +533,11 @@ function main() {
     process.exit(0);
   }
 
+  if (opts.noColoredAdditions && opts.onlyColoredAdditions) {
+    console.error("Error: --no-colored-additions and --only-colored-additions cannot be used together.");
+    process.exit(1);
+  }
+
   let targetPath;
   try {
     targetPath = resolveTargetPath(opts);
@@ -463,42 +567,92 @@ function main() {
   const original = fs.readFileSync(targetPath, "utf8");
 
   const shebangPatch = patchTargetShebang(original);
-  const toolPatch = patchCollapsedReadSearch(shebangPatch.content);
+  let currentContent = shebangPatch.content;
+  let toolPatch = {
+    content: currentContent,
+    candidates: 0,
+    patched: 0,
+  };
+  if (!opts.onlyColoredAdditions) {
+    toolPatch = patchCollapsedReadSearch(currentContent);
+    currentContent = toolPatch.content;
+  }
+
+  let writeCreateDiffPatch = {
+    content: currentContent,
+    candidates: 0,
+    patched: 0,
+  };
+  if (!opts.noColoredAdditions) {
+    writeCreateDiffPatch = patchWriteCreateDiffColors(currentContent);
+    currentContent = writeCreateDiffPatch.content;
+  }
   let thinkingPatch = {
-    content: toolPatch.content,
+    content: currentContent,
     candidates: 0,
     patched: 0,
   };
   let thinkingStreamingPatch = {
-    content: toolPatch.content,
+    content: currentContent,
     candidates: 0,
     patched: 0,
   };
+  const skipThinking = opts.onlyColoredAdditions || opts.noInlineThinking;
 
-  if (!opts.noThinking) {
-    thinkingPatch = patchThinkingCase(toolPatch.content);
+  if (!skipThinking) {
+    thinkingPatch = patchThinkingCase(currentContent);
     thinkingStreamingPatch = patchThinkingStreaming(thinkingPatch.content);
+    currentContent = thinkingStreamingPatch.content;
   }
-  const installerPatch = patchInstallerMigrationMessage(thinkingStreamingPatch.content);
-  const nextContent = installerPatch.content;
+
+  let installerPatch = {
+    content: currentContent,
+    candidates: 0,
+    patched: 0,
+  };
+  if (!opts.onlyColoredAdditions) {
+    installerPatch = patchInstallerMigrationMessage(currentContent);
+    currentContent = installerPatch.content;
+  }
+  const nextContent = currentContent;
 
   console.log("Patch summary:");
   console.log(`  shebang candidates: ${shebangPatch.candidates}, patched: ${shebangPatch.patched}`);
-  console.log(
-    `  collapsed_read_search candidates: ${toolPatch.candidates}, patched: ${toolPatch.patched}`
-  );
-  if (opts.noThinking) {
-    console.log("  thinking candidates: 0, patched: 0 (skipped via --no-thinking)");
-    console.log("  thinking streaming candidates: 0, patched: 0 (skipped via --no-thinking)");
+  if (opts.onlyColoredAdditions) {
+    console.log(
+      "  collapsed_read_search candidates: 0, patched: 0 (skipped via --only-colored-additions)"
+    );
+  } else {
+    console.log(
+      `  collapsed_read_search candidates: ${toolPatch.candidates}, patched: ${toolPatch.patched}`
+    );
+  }
+  if (opts.noColoredAdditions) {
+    console.log("  write-create diff color candidates: 0, patched: 0 (skipped via --no-colored-additions)");
+  } else {
+    console.log(
+      `  write-create diff color candidates: ${writeCreateDiffPatch.candidates}, patched: ${writeCreateDiffPatch.patched}`
+    );
+  }
+  if (skipThinking) {
+    const reason = opts.onlyColoredAdditions
+      ? "--only-colored-additions"
+      : "--no-inline-thinking";
+    console.log(`  thinking candidates: 0, patched: 0 (skipped via ${reason})`);
+    console.log(`  thinking streaming candidates: 0, patched: 0 (skipped via ${reason})`);
   } else {
     console.log(`  thinking candidates: ${thinkingPatch.candidates}, patched: ${thinkingPatch.patched}`);
     console.log(
       `  thinking streaming candidates: ${thinkingStreamingPatch.candidates}, patched: ${thinkingStreamingPatch.patched}`
     );
   }
-  console.log(
-    `  installer message candidates: ${installerPatch.candidates}, patched: ${installerPatch.patched}`
-  );
+  if (opts.onlyColoredAdditions) {
+    console.log("  installer message candidates: 0, patched: 0 (skipped via --only-colored-additions)");
+  } else {
+    console.log(
+      `  installer message candidates: ${installerPatch.candidates}, patched: ${installerPatch.patched}`
+    );
+  }
 
   if (nextContent === original) {
     console.log("No changes needed.");
