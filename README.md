@@ -63,6 +63,7 @@ Runs every 6 hours, but in case a new version is out and the releases page of th
 3. Created-file diff coloring:
    - Rewrites write-result `case"create"` rendering to use the same diff renderer as updates
    - Synthesizes a one-hunk `structuredPatch` with `+` lines for new file content
+   - Forces muted add/remove line backgrounds in word-diff mode so unchanged parts of `+`/`-` lines stay tinted
 4. Thinking visibility:
    - Forces `isTranscriptMode:!0`
    - Forces `hideInTranscript:!1` when present

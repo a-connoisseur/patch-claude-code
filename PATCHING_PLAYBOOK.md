@@ -91,6 +91,8 @@ case"create": ... return createElement(AG1,{
 
 Result: file-creation output renders through the diff component, so added lines get the same green/red diff palette as edit/write updates.
 
+Also patches word-diff rendering so `+`/`-` lines keep muted line background colors even when inline word highlights are present.
+
 ### 4) Thinking streaming
 
 Patch both behaviors in message rendering:

@@ -202,6 +202,78 @@ function patchWriteCreateDiffColors(content) {
   };
 }
 
+function patchWordDiffLineBackgrounds(content) {
+  const anchor = '"diffAddedWord";else if(!';
+  let output = content;
+  let candidates = 0;
+  let patched = 0;
+
+  let index = 0;
+  while (true) {
+    const anchorIndex = output.indexOf(anchor, index);
+    if (anchorIndex === -1) {
+      break;
+    }
+
+    const fnStart = output.lastIndexOf("function ", anchorIndex);
+    const fnEnd = output.indexOf("function ", anchorIndex + anchor.length);
+    if (fnStart === -1 || fnEnd === -1) {
+      index = anchorIndex + anchor.length;
+      continue;
+    }
+
+    const segment = output.slice(fnStart, fnEnd);
+    if (segment.includes("diffAddedDimmed") && segment.includes("backgroundColor:") && segment.includes("??(")) {
+      index = anchorIndex + anchor.length;
+      continue;
+    }
+
+    const signatureMatch = segment.match(/^function [A-Za-z_$][\w$]*\(([^)]*)\)\{/);
+    const typeVarMatch = segment.match(/let\{type:([A-Za-z_$][\w$]*),/);
+    if (!signatureMatch || !typeVarMatch) {
+      index = anchorIndex + anchor.length;
+      continue;
+    }
+
+    const params = signatureMatch[1].split(",").map((p) => p.trim());
+    if (params.length < 4) {
+      index = anchorIndex + anchor.length;
+      continue;
+    }
+
+    const dimVar = params[3];
+    const typeVar = typeVarMatch[1];
+
+    const childBgPattern =
+      /(key:`part-\$\{[A-Za-z_$][\w$]*\}-\$\{[A-Za-z_$][\w$]*\}`,backgroundColor:)([A-Za-z_$][\w$]*)(\},[A-Za-z_$][\w$]*\)\))/;
+
+    if (!childBgPattern.test(segment)) {
+      index = anchorIndex + anchor.length;
+      continue;
+    }
+
+    candidates += 1;
+    const nextSegment = segment.replace(childBgPattern, (_full, prefix, bgVar, suffix) => {
+      return `${prefix}${bgVar}??(${typeVar}==="add"?${dimVar}?"diffAddedDimmed":"diffAdded":${dimVar}?"diffRemovedDimmed":"diffRemoved")${suffix}`;
+    });
+
+    if (nextSegment !== segment) {
+      patched += 1;
+      output = output.slice(0, fnStart) + nextSegment + output.slice(fnEnd);
+      index = fnStart + nextSegment.length;
+      continue;
+    }
+
+    index = anchorIndex + anchor.length;
+  }
+
+  return {
+    content: output,
+    candidates,
+    patched,
+  };
+}
+
 function patchThinkingCase(content) {
   const caseNeedle = 'case"thinking":';
   let index = 0;
@@ -583,9 +655,16 @@ function main() {
     candidates: 0,
     patched: 0,
   };
+  let wordDiffLineBgPatch = {
+    content: currentContent,
+    candidates: 0,
+    patched: 0,
+  };
   if (!opts.noColoredAdditions) {
     writeCreateDiffPatch = patchWriteCreateDiffColors(currentContent);
     currentContent = writeCreateDiffPatch.content;
+    wordDiffLineBgPatch = patchWordDiffLineBackgrounds(currentContent);
+    currentContent = wordDiffLineBgPatch.content;
   }
   let thinkingPatch = {
     content: currentContent,
@@ -629,9 +708,13 @@ function main() {
   }
   if (opts.noColoredAdditions) {
     console.log("  write-create diff color candidates: 0, patched: 0 (skipped via --no-colored-additions)");
+    console.log("  word-diff line bg candidates: 0, patched: 0 (skipped via --no-colored-additions)");
   } else {
     console.log(
       `  write-create diff color candidates: ${writeCreateDiffPatch.candidates}, patched: ${writeCreateDiffPatch.patched}`
+    );
+    console.log(
+      `  word-diff line bg candidates: ${wordDiffLineBgPatch.candidates}, patched: ${wordDiffLineBgPatch.patched}`
     );
   }
   if (skipThinking) {
