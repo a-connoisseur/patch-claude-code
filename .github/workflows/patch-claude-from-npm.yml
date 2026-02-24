@@ -104,13 +104,10 @@ jobs:
         run: |
           set -euo pipefail
           cp work/claude.original work/claude.patched
-          node patch-claude-display.js --file ./work/claude.patched --no-colored-additions
+          node patch-claude-display.js --file ./work/claude.patched
 
           cp work/claude.original work/claude.no-inline-thinking.patched
-          node patch-claude-display.js --file ./work/claude.no-inline-thinking.patched --no-inline-thinking --no-colored-additions
-
-          cp work/claude.original work/claude.colored-additions.patched
-          node patch-claude-display.js --file ./work/claude.colored-additions.patched
+          node patch-claude-display.js --file ./work/claude.no-inline-thinking.patched --disable thinking-inline
 
       - name: Write metadata
         if: steps.check.outputs.skip != 'true'
@@ -139,5 +136,4 @@ jobs:
             work/metadata.txt \
             work/claude.original \
             work/claude.patched \
-            work/claude.no-inline-thinking.patched \
-            work/claude.colored-additions.patched
+            work/claude.no-inline-thinking.patched

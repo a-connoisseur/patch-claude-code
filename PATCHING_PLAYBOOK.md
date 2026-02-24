@@ -21,18 +21,14 @@ Optional modes:
 ```bash
 node patch-claude-display.js --file ./claude --dry-run
 node patch-claude-display.js --file ./claude --restore
-node patch-claude-display.js --file ./claude --no-inline-thinking
-node patch-claude-display.js --file ./claude --no-colored-additions
-node patch-claude-display.js --file ./claude --only-colored-additions
+node patch-claude-display.js --list-patches
+node patch-claude-display.js --file ./claude --disable create-diff-colors,word-diff-line-bg
+node patch-claude-display.js --file ./claude --disable thinking-inline,thinking-streaming,create-diff-colors,word-diff-line-bg
 ```
 
 The script creates a one-time backup at `./claude.display.backup`.
 
-`--no-inline-thinking` skips both thinking visibility and thinking streaming patches, while still applying non-thinking display patches.
-
-`--no-colored-additions` skips the created-file diff-color patch.
-
-`--only-colored-additions` applies only the created-file diff-color patch.
+Use `--disable <id1,id2,...>` to turn off specific modules.
 
 ## What It Patches
 

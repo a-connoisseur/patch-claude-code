@@ -2,10 +2,9 @@
 
 This repo contains a patcher for Claude Code's bundled JS file (`claude` / `cli.js`).
 
-Releases include three patched binaries:
-- `claude.patched` (all patches except created-file diff colors)
-- `claude.no-inline-thinking.patched` (all patches except thinking visibility/streaming and created-file diff colors)
-- `claude.colored-additions.patched` (all patches, including created-file diff colors)
+Releases include two patched binaries:
+- `claude.patched` (all patches, including colored file diff patches)
+- `claude.no-inline-thinking.patched` (all patches except inline thinking visibility)
 
 ## What it does
 Patches Claude Code to:
@@ -32,7 +31,7 @@ The patch script is included in case you want to do it yourself.
    sudo mv claude.patched $(readlink -f $(which claude))
    ```
 
-   If you want all patches including created-file diff colors, use `claude.colored-additions.patched`.
+   If you do not want inline thinking visibility, use `claude.no-inline-thinking.patched`.
 
 ## How can I trust this?
 It takes Claude Code from npm, published by Anthropic, and runs a patch script on it which you can find in this repository. The release is created by Github Actions. You're also free to patch it yourself on your own machine.
@@ -45,8 +44,8 @@ Manual workflow: `.github/workflows/patch-claude-from-npm.yml`
 It:
 - Downloads `@anthropic-ai/claude-code` from npm
 - Extracts `cli.js`
-- Applies the patch script in three modes (`--no-colored-additions`, `--no-inline-thinking --no-colored-additions`, and default full patch)
-- Uploads release assets with metadata + original + three patched files
+- Applies the patch script in two module configurations (full/default and `--disable thinking-inline`)
+- Uploads release assets with metadata + original + two patched files
 
 Runs every 6 hours, but in case a new version is out and the releases page of this repo has not been updated, you can fork it and run the action yourself, manually, from the actions tab.
 
@@ -83,43 +82,37 @@ Runs every 6 hours, but in case a new version is out and the releases page of th
 Patch local `./claude` automatically:
 
 ```bash
-bun patch-claude-display.js
+node patch-claude-display.js
 ```
 
 Patch a specific file:
 
 ```bash
-bun patch-claude-display.js --file /path/to/cli.js
+node patch-claude-display.js --file /path/to/cli.js
 ```
 
 Dry run:
 
 ```bash
-bun patch-claude-display.js --dry-run
+node patch-claude-display.js --dry-run
 ```
 
-No-inline-thinking variant (skip inline/streaming thinking patches):
+List available patch module IDs:
 
 ```bash
-bun patch-claude-display.js --no-inline-thinking
+node patch-claude-display.js --list-patches
 ```
 
-No-colored-additions variant (skip created-file diff-color patch):
+Disable inline thinking visibility only:
 
 ```bash
-bun patch-claude-display.js --no-colored-additions
-```
-
-Colored-additions-only variant (only patch created-file diff coloring):
-
-```bash
-bun patch-claude-display.js --only-colored-additions
+node patch-claude-display.js --disable thinking-inline
 ```
 
 Restore backup:
 
 ```bash
-bun patch-claude-display.js --file /path/to/cli.js --restore
+node patch-claude-display.js --file /path/to/cli.js --restore
 ```
 
 The script creates a backup at `<target>.display.backup`.

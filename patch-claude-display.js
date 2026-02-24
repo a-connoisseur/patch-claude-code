@@ -7,18 +7,29 @@ function printHelp() {
   console.log("");
   console.log("Usage:");
   console.log(
-    "  node patch-claude-display.js [--file <path>] [--dry-run] [--restore] [--no-inline-thinking|--no-thinking] [--no-colored-additions] [--only-colored-additions]"
+    "  node patch-claude-display.js [--file <path>] [--dry-run] [--restore] [--disable <ids>] [--list-patches]"
   );
   console.log("");
   console.log("Options:");
   console.log("  --file <path>   Target Claude JS file (auto-uses ./claude when present)");
   console.log("  --dry-run       Show what would change without writing");
   console.log("  --restore       Restore from backup");
-  console.log("  --no-inline-thinking  Skip all thinking visibility/streaming patches");
-  console.log("  --no-thinking         Alias for --no-inline-thinking");
-  console.log("  --no-colored-additions  Skip created-file diff-color patch");
-  console.log("  --only-colored-additions  Apply only created-file diff-color patch");
+  console.log("  --disable <ids> Comma-separated patch ids to disable");
+  console.log("  --list-patches  Print available patch ids and exit");
   console.log("  --help, -h      Show this help");
+}
+
+function parsePatchIds(value, flagName) {
+  const ids = value
+    .split(",")
+    .map((id) => id.trim())
+    .filter(Boolean);
+
+  if (ids.length === 0) {
+    throw new Error(`Expected a comma-separated list for ${flagName}`);
+  }
+
+  return ids;
 }
 
 function parseArgs(argv) {
@@ -26,9 +37,8 @@ function parseArgs(argv) {
     file: null,
     dryRun: false,
     restore: false,
-    noInlineThinking: false,
-    noColoredAdditions: false,
-    onlyColoredAdditions: false,
+    disable: [],
+    listPatches: false,
     help: false,
   };
 
@@ -45,12 +55,15 @@ function parseArgs(argv) {
       opts.dryRun = true;
     } else if (arg === "--restore") {
       opts.restore = true;
-    } else if (arg === "--no-thinking" || arg === "--no-inline-thinking") {
-      opts.noInlineThinking = true;
-    } else if (arg === "--no-colored-additions") {
-      opts.noColoredAdditions = true;
-    } else if (arg === "--only-colored-additions") {
-      opts.onlyColoredAdditions = true;
+    } else if (arg === "--disable") {
+      const value = argv[i + 1];
+      if (!value) {
+        throw new Error("Missing value for --disable");
+      }
+      opts.disable.push(...parsePatchIds(value, "--disable"));
+      i += 1;
+    } else if (arg === "--list-patches") {
+      opts.listPatches = true;
     } else if (arg === "--help" || arg === "-h") {
       opts.help = true;
     } else {
@@ -589,6 +602,60 @@ function patchTargetShebang(content) {
   };
 }
 
+const PATCH_MODULES = [
+  {
+    id: "shebang",
+    description: "Rewrite #!/usr/bin/env node to bun",
+    apply: patchTargetShebang,
+  },
+  {
+    id: "tool-call-verbose",
+    description: "Force verbose collapsed read/search rendering",
+    apply: patchCollapsedReadSearch,
+  },
+  {
+    id: "create-diff-colors",
+    description: "Render created files through diff component with + lines",
+    apply: patchWriteCreateDiffColors,
+  },
+  {
+    id: "word-diff-line-bg",
+    description: "Keep muted +/- line background in word-diff mode",
+    apply: patchWordDiffLineBackgrounds,
+  },
+  {
+    id: "thinking-inline",
+    description: "Always render thinking blocks inline",
+    apply: patchThinkingCase,
+  },
+  {
+    id: "thinking-streaming",
+    description: "Enable/repair streaming thinking behavior",
+    apply: patchThinkingStreaming,
+  },
+  {
+    id: "installer-label",
+    description: "Replace npm/native installer warning text with (patched)",
+    apply: patchInstallerMigrationMessage,
+  },
+];
+
+function resolveSelectedPatchIds(opts) {
+  const valid = new Set(PATCH_MODULES.map((module) => module.id));
+  const invalid = [...opts.disable].filter((id) => !valid.has(id));
+
+  if (invalid.length > 0) {
+    throw new Error(`Unknown patch id(s): ${invalid.join(", ")}. Use --list-patches to see valid ids.`);
+  }
+
+  const selected = new Set(PATCH_MODULES.map((module) => module.id));
+  for (const id of opts.disable) {
+    selected.delete(id);
+  }
+
+  return selected;
+}
+
 function main() {
   let opts;
   try {
@@ -605,8 +672,19 @@ function main() {
     process.exit(0);
   }
 
-  if (opts.noColoredAdditions && opts.onlyColoredAdditions) {
-    console.error("Error: --no-colored-additions and --only-colored-additions cannot be used together.");
+  if (opts.listPatches) {
+    console.log("Available patches:");
+    for (const module of PATCH_MODULES) {
+      console.log(`  ${module.id} - ${module.description}`);
+    }
+    process.exit(0);
+  }
+
+  let selectedPatchIds;
+  try {
+    selectedPatchIds = resolveSelectedPatchIds(opts);
+  } catch (error) {
+    console.error(`Error: ${error.message}`);
     process.exit(1);
   }
 
@@ -637,104 +715,38 @@ function main() {
 
   ensureFileExists(targetPath);
   const original = fs.readFileSync(targetPath, "utf8");
+  let currentContent = original;
+  const patchResults = new Map();
 
-  const shebangPatch = patchTargetShebang(original);
-  let currentContent = shebangPatch.content;
-  let toolPatch = {
-    content: currentContent,
-    candidates: 0,
-    patched: 0,
-  };
-  if (!opts.onlyColoredAdditions) {
-    toolPatch = patchCollapsedReadSearch(currentContent);
-    currentContent = toolPatch.content;
+  for (const module of PATCH_MODULES) {
+    if (!selectedPatchIds.has(module.id)) {
+      patchResults.set(module.id, {
+        candidates: 0,
+        patched: 0,
+        skipped: true,
+      });
+      continue;
+    }
+
+    const result = module.apply(currentContent);
+    currentContent = result.content;
+    patchResults.set(module.id, {
+      candidates: result.candidates,
+      patched: result.patched,
+      skipped: false,
+    });
   }
 
-  let writeCreateDiffPatch = {
-    content: currentContent,
-    candidates: 0,
-    patched: 0,
-  };
-  let wordDiffLineBgPatch = {
-    content: currentContent,
-    candidates: 0,
-    patched: 0,
-  };
-  if (!opts.noColoredAdditions) {
-    writeCreateDiffPatch = patchWriteCreateDiffColors(currentContent);
-    currentContent = writeCreateDiffPatch.content;
-    wordDiffLineBgPatch = patchWordDiffLineBackgrounds(currentContent);
-    currentContent = wordDiffLineBgPatch.content;
-  }
-  let thinkingPatch = {
-    content: currentContent,
-    candidates: 0,
-    patched: 0,
-  };
-  let thinkingStreamingPatch = {
-    content: currentContent,
-    candidates: 0,
-    patched: 0,
-  };
-  const skipThinking = opts.onlyColoredAdditions || opts.noInlineThinking;
-
-  if (!skipThinking) {
-    thinkingPatch = patchThinkingCase(currentContent);
-    thinkingStreamingPatch = patchThinkingStreaming(thinkingPatch.content);
-    currentContent = thinkingStreamingPatch.content;
-  }
-
-  let installerPatch = {
-    content: currentContent,
-    candidates: 0,
-    patched: 0,
-  };
-  if (!opts.onlyColoredAdditions) {
-    installerPatch = patchInstallerMigrationMessage(currentContent);
-    currentContent = installerPatch.content;
-  }
   const nextContent = currentContent;
 
   console.log("Patch summary:");
-  console.log(`  shebang candidates: ${shebangPatch.candidates}, patched: ${shebangPatch.patched}`);
-  if (opts.onlyColoredAdditions) {
-    console.log(
-      "  collapsed_read_search candidates: 0, patched: 0 (skipped via --only-colored-additions)"
-    );
-  } else {
-    console.log(
-      `  collapsed_read_search candidates: ${toolPatch.candidates}, patched: ${toolPatch.patched}`
-    );
-  }
-  if (opts.noColoredAdditions) {
-    console.log("  write-create diff color candidates: 0, patched: 0 (skipped via --no-colored-additions)");
-    console.log("  word-diff line bg candidates: 0, patched: 0 (skipped via --no-colored-additions)");
-  } else {
-    console.log(
-      `  write-create diff color candidates: ${writeCreateDiffPatch.candidates}, patched: ${writeCreateDiffPatch.patched}`
-    );
-    console.log(
-      `  word-diff line bg candidates: ${wordDiffLineBgPatch.candidates}, patched: ${wordDiffLineBgPatch.patched}`
-    );
-  }
-  if (skipThinking) {
-    const reason = opts.onlyColoredAdditions
-      ? "--only-colored-additions"
-      : "--no-inline-thinking";
-    console.log(`  thinking candidates: 0, patched: 0 (skipped via ${reason})`);
-    console.log(`  thinking streaming candidates: 0, patched: 0 (skipped via ${reason})`);
-  } else {
-    console.log(`  thinking candidates: ${thinkingPatch.candidates}, patched: ${thinkingPatch.patched}`);
-    console.log(
-      `  thinking streaming candidates: ${thinkingStreamingPatch.candidates}, patched: ${thinkingStreamingPatch.patched}`
-    );
-  }
-  if (opts.onlyColoredAdditions) {
-    console.log("  installer message candidates: 0, patched: 0 (skipped via --only-colored-additions)");
-  } else {
-    console.log(
-      `  installer message candidates: ${installerPatch.candidates}, patched: ${installerPatch.patched}`
-    );
+  for (const module of PATCH_MODULES) {
+    const result = patchResults.get(module.id);
+    if (result.skipped) {
+      console.log(`  ${module.id} candidates: 0, patched: 0 (skipped)`);
+      continue;
+    }
+    console.log(`  ${module.id} candidates: ${result.candidates}, patched: ${result.patched}`);
   }
 
   if (nextContent === original) {
