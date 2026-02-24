@@ -20,9 +20,12 @@ Optional modes:
 ```bash
 node patch-claude-display.js --file ./claude --dry-run
 node patch-claude-display.js --file ./claude --restore
+node patch-claude-display.js --file ./claude --no-thinking
 ```
 
 The script creates a one-time backup at `./claude.display.backup`.
+
+`--no-thinking` skips both thinking visibility and thinking streaming patches, while still applying non-thinking display patches.
 
 ## What It Patches
 

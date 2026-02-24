@@ -111,6 +111,9 @@ jobs:
           bun patch-claude-display.js --file ./claude
           cp claude work/claude.patched
 
+          cp work/claude.original work/claude.no-thinking.patched
+          bun patch-claude-display.js --file ./work/claude.no-thinking.patched --no-thinking
+
       - name: Write metadata
         if: steps.check.outputs.skip != 'true'
         run: |
@@ -137,4 +140,5 @@ jobs:
             --notes "Patched from \`@anthropic-ai/claude-code@${VERSION}\`" \
             work/claude.original \
             work/claude.patched \
+            work/claude.no-thinking.patched \
             work/metadata.txt

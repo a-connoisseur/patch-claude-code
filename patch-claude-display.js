@@ -8,12 +8,15 @@ function printHelp() {
   console.log("======================");
   console.log("");
   console.log("Usage:");
-  console.log("  node patch-claude-display.js [--file <path>] [--dry-run] [--restore]");
+  console.log(
+    "  node patch-claude-display.js [--file <path>] [--dry-run] [--restore] [--no-thinking]"
+  );
   console.log("");
   console.log("Options:");
   console.log("  --file <path>   Target Claude JS file (auto-uses ./claude when present)");
   console.log("  --dry-run       Show what would change without writing");
   console.log("  --restore       Restore from backup");
+  console.log("  --no-thinking   Skip all thinking visibility/streaming patches");
   console.log("  --help, -h      Show this help");
 }
 
@@ -22,6 +25,7 @@ function parseArgs(argv) {
     file: null,
     dryRun: false,
     restore: false,
+    noThinking: false,
     help: false,
   };
 
@@ -38,6 +42,8 @@ function parseArgs(argv) {
       opts.dryRun = true;
     } else if (arg === "--restore") {
       opts.restore = true;
+    } else if (arg === "--no-thinking") {
+      opts.noThinking = true;
     } else if (arg === "--help" || arg === "-h") {
       opts.help = true;
     } else {
@@ -458,8 +464,21 @@ function main() {
 
   const shebangPatch = patchTargetShebang(original);
   const toolPatch = patchCollapsedReadSearch(shebangPatch.content);
-  const thinkingPatch = patchThinkingCase(toolPatch.content);
-  const thinkingStreamingPatch = patchThinkingStreaming(thinkingPatch.content);
+  let thinkingPatch = {
+    content: toolPatch.content,
+    candidates: 0,
+    patched: 0,
+  };
+  let thinkingStreamingPatch = {
+    content: toolPatch.content,
+    candidates: 0,
+    patched: 0,
+  };
+
+  if (!opts.noThinking) {
+    thinkingPatch = patchThinkingCase(toolPatch.content);
+    thinkingStreamingPatch = patchThinkingStreaming(thinkingPatch.content);
+  }
   const installerPatch = patchInstallerMigrationMessage(thinkingStreamingPatch.content);
   const nextContent = installerPatch.content;
 
@@ -468,10 +487,15 @@ function main() {
   console.log(
     `  collapsed_read_search candidates: ${toolPatch.candidates}, patched: ${toolPatch.patched}`
   );
-  console.log(`  thinking candidates: ${thinkingPatch.candidates}, patched: ${thinkingPatch.patched}`);
-  console.log(
-    `  thinking streaming candidates: ${thinkingStreamingPatch.candidates}, patched: ${thinkingStreamingPatch.patched}`
-  );
+  if (opts.noThinking) {
+    console.log("  thinking candidates: 0, patched: 0 (skipped via --no-thinking)");
+    console.log("  thinking streaming candidates: 0, patched: 0 (skipped via --no-thinking)");
+  } else {
+    console.log(`  thinking candidates: ${thinkingPatch.candidates}, patched: ${thinkingPatch.patched}`);
+    console.log(
+      `  thinking streaming candidates: ${thinkingStreamingPatch.candidates}, patched: ${thinkingStreamingPatch.patched}`
+    );
+  }
   console.log(
     `  installer message candidates: ${installerPatch.candidates}, patched: ${installerPatch.patched}`
   );

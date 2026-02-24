@@ -2,6 +2,10 @@
 
 This repo contains a patcher for Claude Code's bundled JS file (`claude` / `cli.js`).
 
+Releases include two patched binaries:
+- `claude.patched` (tool calls + inline/streaming thinking)
+- `claude.no-thinking.patched` (tool calls patches only, no thinking display patches)
+
 ## What it does
 Patches Claude Code to:
   
@@ -26,6 +30,8 @@ The patch script is included in case you want to do it yourself.
    sudo mv claude.patched $(readlink -f $(which claude))
    ```
 
+   If you do not want thinking patches, use `claude.no-thinking.patched` instead.
+
 ## How can I trust this?
 It takes Claude Code from npm, published by Anthropic, and runs a patch script on it which you can find in this repository. The release is created by Github Actions. You're also free to patch it yourself on your own machine.
 
@@ -37,8 +43,8 @@ Manual workflow: `.github/workflows/patch-claude-from-npm.yml`
 It:
 - Downloads `@anthropic-ai/claude-code` from npm
 - Extracts `cli.js`
-- Applies the patch script
-- Uploads artifact with original + patched files
+- Applies the patch script in two modes (default and `--no-thinking`)
+- Uploads artifact with original + both patched files
 
 Runs every 6 hours, but in case a new version is out and the releases page of this repo has not been updated, you can fork it and run the action yourself, manually, from the actions tab.
 
@@ -84,6 +90,12 @@ Dry run:
 
 ```bash
 bun patch-claude-display.js --dry-run
+```
+
+No-thinking variant (skip inline/streaming thinking patches):
+
+```bash
+bun patch-claude-display.js --no-thinking
 ```
 
 Restore backup:
