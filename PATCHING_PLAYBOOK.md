@@ -6,7 +6,8 @@ This playbook covers both desired behaviors for future Claude Code updates:
 2. Always show thinking inline (no hidden thinking)
 3. Stream thinking while it is generated (not only after the block completes)
 4. Show add-only write results with diff-style coloring (green `+` lines)
-5. Replace npm-installer migration warning text with `"(patched)"`
+5. Always show subagent `Prompt:` blocks (not only in transcript/Ctrl+O mode)
+6. Replace npm-installer migration warning text with `"(patched)"`
 
 ## Fast Path
 
@@ -23,7 +24,7 @@ node patch-claude-display.js --file ./claude --dry-run
 node patch-claude-display.js --file ./claude --restore
 node patch-claude-display.js --list-patches
 node patch-claude-display.js --file ./claude --disable create-diff-colors,word-diff-line-bg
-node patch-claude-display.js --file ./claude --disable thinking-inline,thinking-streaming,create-diff-colors,word-diff-line-bg
+node patch-claude-display.js --file ./claude --disable thinking-inline,thinking-streaming,subagent-prompt,create-diff-colors,word-diff-line-bg
 ```
 
 The script creates a one-time backup at `./claude.display.backup`.
@@ -101,7 +102,27 @@ Patch both behaviors in message rendering:
 
 Result: thinking text updates per delta while streaming, instead of only after completion.
 
-### 5) NPM migration warning text
+### 5) Subagent prompt visibility
+
+Target shape:
+
+```js
+function ...( ... isTranscriptMode:X=!1 ... ){
+  ... "Backgrounded agent" ...
+  ... fallback:"ctrl+o" ...
+  ... X&&P&&createElement(...,{prompt:P,theme:T}) ...
+}
+```
+
+Patch:
+
+```js
+P&&createElement(...,{prompt:P,theme:T})
+```
+
+Result: subagent `Prompt:` blocks are visible in default mode, not only in transcript mode.
+
+### 6) NPM migration warning text
 
 Target: the long notification string containing:
 
@@ -149,6 +170,12 @@ node -e 'const fs=require("fs");const s=fs.readFileSync("claude","utf8");console
 node -e 'const fs=require("fs");const s=fs.readFileSync("claude","utf8");console.log("inline thinking renderer present:",/case\"thinking\":\\{[^}]{0,900}createElement\\([A-Za-z_$][\\w$]*,\\{[^}]*isTranscriptMode:!0/.test(s));console.log("transient streamed-thinking renderer present:",/createElement\\([A-Za-z_$][\\w$]*,\\{marginTop:1\\},[A-Za-z_$][\\w$]*\\.createElement\\([A-Za-z_$][\\w$]*,\\{param:\\{type:\"thinking\",thinking:[A-Za-z_$][\\w$]*\\.thinking\\}/.test(s));'
 ```
 
+Subagent prompt visibility check:
+
+```bash
+node -e 'const fs=require("fs");const s=fs.readFileSync("claude","utf8");console.log("subagent prompt not transcript-gated:",!/isTranscriptMode:[A-Za-z_$][\\w$]*=!1[\\s\\S]{0,1300}[A-Za-z_$][\\w$]*&&[A-Za-z_$][\\w$]*&&[A-Za-z_$][\\w$]*\\.createElement\\([A-Za-z_$][\\w$]*,null,[A-Za-z_$][\\w$]*\\.createElement\\([A-Za-z_$][\\w$]*,\\{prompt:[A-Za-z_$][\\w$]*,theme:[A-Za-z_$][\\w$]*\\}\\)\\)/.test(s));'
+```
+
 ## If a Future Update Breaks the Script
 
 1. Find candidate tool renderer blocks:
@@ -179,5 +206,5 @@ Use this exact instruction:
 
 ```text
 Patch the current claude JS using PATCHING_PLAYBOOK.md.
-Apply display patches (tool calls verbose + thinking inline + thinking streaming), run verification, and report what changed.
+Apply display patches (tool calls verbose + thinking inline + thinking streaming + subagent prompt visibility), run verification, and report what changed.
 ```

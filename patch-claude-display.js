@@ -540,6 +540,84 @@ function patchThinkingStreaming(content) {
   };
 }
 
+function patchSubagentPromptVisibility(content) {
+  const backgroundedAnchor = '"Backgrounded agent"';
+  let output = content;
+  let candidates = 0;
+  let patched = 0;
+
+  let index = 0;
+  while (true) {
+    const anchorIndex = output.indexOf(backgroundedAnchor, index);
+    if (anchorIndex === -1) {
+      break;
+    }
+
+    const fnStart = output.lastIndexOf("function ", anchorIndex);
+    const fnEndCandidate = output.indexOf("function ", anchorIndex + backgroundedAnchor.length);
+    const fnEnd = fnEndCandidate === -1 ? output.length : fnEndCandidate;
+
+    if (fnStart === -1 || fnEnd <= fnStart) {
+      index = anchorIndex + backgroundedAnchor.length;
+      continue;
+    }
+
+    const segment = output.slice(fnStart, fnEnd);
+
+    const isRelevantRenderer =
+      segment.includes('action:"app:toggleTranscript"') &&
+      segment.includes('fallback:"ctrl+o"') &&
+      segment.includes("isTranscriptMode:") &&
+      segment.includes("{prompt:") &&
+      segment.includes(",theme:");
+
+    if (!isRelevantRenderer) {
+      index = anchorIndex + backgroundedAnchor.length;
+      continue;
+    }
+
+    const transcriptModeMatch = segment.match(/isTranscriptMode:([A-Za-z_$][\w$]*)=!1/);
+    if (!transcriptModeMatch) {
+      index = anchorIndex + backgroundedAnchor.length;
+      continue;
+    }
+
+    const transcriptModeVar = transcriptModeMatch[1];
+    const gatePattern = new RegExp(`${transcriptModeVar}&&([A-Za-z_$][\\w$]*)&&`, "g");
+
+    let localCandidates = 0;
+    let localPatched = 0;
+
+    const nextSegment = segment.replace(gatePattern, (full, promptVar, offset, source) => {
+      const nearby = source.slice(offset, offset + 260);
+      if (!nearby.includes(`{prompt:${promptVar},theme:`)) {
+        return full;
+      }
+
+      localCandidates += 1;
+      localPatched += 1;
+      return `${promptVar}&&`;
+    });
+
+    candidates += localCandidates;
+
+    if (nextSegment !== segment) {
+      patched += localPatched;
+      output = output.slice(0, fnStart) + nextSegment + output.slice(fnEnd);
+      index = fnStart + nextSegment.length;
+      continue;
+    }
+
+    index = anchorIndex + backgroundedAnchor.length;
+  }
+
+  return {
+    content: output,
+    candidates,
+    patched,
+  };
+}
+
 function patchInstallerMigrationMessage(content) {
   const needle = "switched from npm to native installer";
   let output = content;
@@ -632,6 +710,11 @@ const PATCH_MODULES = [
     id: "thinking-streaming",
     description: "Enable/repair streaming thinking behavior",
     apply: patchThinkingStreaming,
+  },
+  {
+    id: "subagent-prompt",
+    description: "Show subagent Prompt blocks outside transcript mode",
+    apply: patchSubagentPromptVisibility,
   },
   {
     id: "installer-label",

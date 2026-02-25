@@ -12,8 +12,9 @@ Patches Claude Code to:
 1) Show tool calls (files read, patterns searched, so on) _without verbose mode_
 2) Show thinking inline _without verbose mode_
 3) Stream thinking while it is generated
-4) Show add-only write results using diff-style coloring (green `+` lines)
-5) Use `bun` instead of `node` by default (Claude Code doesn't work well with node for some people)
+4) Always show subagent `Prompt:` blocks (not only in transcript/Ctrl+O mode)
+5) Show add-only write results using diff-style coloring (green `+` lines)
+6) Use `bun` instead of `node` by default (Claude Code doesn't work well with node for some people)
 
 The patch script is included in case you want to do it yourself.
 
@@ -74,7 +75,10 @@ Runs every 6 hours, but in case a new version is out and the releases page of th
    - Patches stream-event handling via stable event literals (`stream_request_start`, `thinking_delta`, `message_stop`)
    - Clears transient streamed-thinking state on `message_stop` (inline final thinking remains in message flow)
    - Removes the 30s post-stop linger window logic
-6. Installer warning text:
+6. Subagent prompt visibility:
+   - Finds the subagent renderer by stable UI literals (`"Backgrounded agent"`, `fallback:"ctrl+o"`, `action:"app:toggleTranscript"`)
+   - Removes only the `isTranscriptMode` gate from `prompt` blocks, so `Prompt:` is shown in default mode too
+7. Installer warning text:
    - Replaces the full npm/native-installer warning string with `"(patched)"`
 
 ## Usage
