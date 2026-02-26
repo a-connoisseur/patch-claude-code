@@ -26,7 +26,8 @@ claude --version
    - Linux no-thinking: `claude.npm-native.no-thinking.patched` + `claude.npm-native.no-thinking.patched.color-diff.node`
    - macOS regular: `claude.npm-native.macos.patched` + `claude.npm-native.macos.patched.color-diff.node`
    - macOS no-thinking: `claude.npm-native.macos.no-thinking.patched` + `claude.npm-native.macos.no-thinking.patched.color-diff.node`
-2. Move both files into your installed Claude path.
+  
+2. Follow the install instructions for your platform below.
 
 ### Install (Linux)
 
