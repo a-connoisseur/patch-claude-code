@@ -122,6 +122,17 @@ jobs:
           cp work/claude.original work/claude.no-inline-thinking.patched
           node patch-claude-display.js --file ./work/claude.no-inline-thinking.patched --disable thinking-inline
 
+      - name: Upload patched npm JS inputs
+        if: steps.check.outputs.skip != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: patched-npm-js-inputs
+          path: |
+            work/claude.patched
+            work/claude.no-inline-thinking.patched
+          if-no-files-found: error
+          retention-days: 1
+
       - name: Download native binary (Linux)
         if: steps.check.outputs.skip != 'true'
         id: native
@@ -229,16 +240,10 @@ jobs:
             --title "$TITLE" \
             --notes "Patched from \`@anthropic-ai/claude-code@${VERSION}\` and native Linux build \`${NATIVE_VERSION}\`" \
             work/metadata.txt \
-            work/claude.original \
-            work/claude.patched \
-            work/claude.no-inline-thinking.patched \
             work/claude.npm-native.patched \
             work/claude.npm-native.no-thinking.patched \
             work/claude.npm-native.patched.color-diff.node \
-            work/claude.npm-native.no-thinking.patched.color-diff.node \
-            work/claude.native.original \
-            work/claude.native.patched \
-            work/claude.native.no-inline-thinking.patched
+            work/claude.npm-native.no-thinking.patched.color-diff.node
 
   patch-macos-native:
     needs: patch
@@ -261,19 +266,11 @@ jobs:
         with:
           bun-version: "1.3.9"
 
-      - name: Download patched npm assets from release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          mkdir -p work
-          TAG="${{ needs.patch.outputs.tag }}"
-
-          gh release download "$TAG" \
-            --pattern "claude.patched" \
-            --pattern "claude.no-inline-thinking.patched" \
-            --dir work \
-            --clobber
+      - name: Download patched npm JS inputs
+        uses: actions/download-artifact@v4
+        with:
+          name: patched-npm-js-inputs
+          path: work
 
       - name: Download native binary (macOS)
         id: native_macos
@@ -351,7 +348,7 @@ jobs:
           codesign -f -s - ./work/claude.native.macos.no-inline-thinking.patched
           ./work/claude.native.macos.no-inline-thinking.patched --version
 
-      - name: Upload macOS native assets to release
+      - name: Upload macOS npm-native assets to release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -359,9 +356,6 @@ jobs:
           TAG="${{ needs.patch.outputs.tag }}"
 
           gh release upload "$TAG" \
-            work/claude.native.macos.original \
-            work/claude.native.macos.patched \
-            work/claude.native.macos.no-inline-thinking.patched \
             work/claude.npm-native.macos.patched \
             work/claude.npm-native.macos.no-thinking.patched \
             work/claude.npm-native.macos.patched.color-diff.node \
