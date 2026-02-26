@@ -106,6 +106,12 @@ jobs:
             echo "title=claude-code ${VERSION}" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Setup Bun
+        if: steps.check.outputs.skip != 'true'
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.9"
+
       - name: Apply display patches
         if: steps.check.outputs.skip != 'true'
         run: |
@@ -115,6 +121,21 @@ jobs:
 
           cp work/claude.original work/claude.no-inline-thinking.patched
           node patch-claude-display.js --file ./work/claude.no-inline-thinking.patched --disable thinking-inline
+
+      - name: Build npm-native binaries (Linux)
+        if: steps.check.outputs.skip != 'true'
+        run: |
+          set -euo pipefail
+
+          tail -n +2 work/claude.patched > work/claude.patched.compile.js
+          bun build --compile work/claude.patched.compile.js --outfile work/claude.npm-native.patched
+          chmod +x work/claude.npm-native.patched
+          ./work/claude.npm-native.patched --version
+
+          tail -n +2 work/claude.no-inline-thinking.patched > work/claude.no-inline-thinking.compile.js
+          bun build --compile work/claude.no-inline-thinking.compile.js --outfile work/claude.npm-native.no-thinking.patched
+          chmod +x work/claude.npm-native.no-thinking.patched
+          ./work/claude.npm-native.no-thinking.patched --version
 
       - name: Download native binary (Linux)
         if: steps.check.outputs.skip != 'true'
@@ -198,6 +219,8 @@ jobs:
             work/claude.original \
             work/claude.patched \
             work/claude.no-inline-thinking.patched \
+            work/claude.npm-native.patched \
+            work/claude.npm-native.no-thinking.patched \
             work/claude.native.original \
             work/claude.native.patched \
             work/claude.native.no-inline-thinking.patched
@@ -217,6 +240,39 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "20"
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.9"
+
+      - name: Download patched npm assets from release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p work
+          TAG="${{ needs.patch.outputs.tag }}"
+
+          gh release download "$TAG" \
+            --pattern "claude.patched" \
+            --pattern "claude.no-inline-thinking.patched" \
+            --dir work \
+            --clobber
+
+      - name: Build npm-native binaries (macOS)
+        run: |
+          set -euo pipefail
+
+          tail -n +2 work/claude.patched > work/claude.patched.compile.js
+          bun build --compile work/claude.patched.compile.js --outfile work/claude.npm-native.macos.patched
+          codesign -f -s - ./work/claude.npm-native.macos.patched
+          ./work/claude.npm-native.macos.patched --version
+
+          tail -n +2 work/claude.no-inline-thinking.patched > work/claude.no-inline-thinking.compile.js
+          bun build --compile work/claude.no-inline-thinking.compile.js --outfile work/claude.npm-native.macos.no-thinking.patched
+          codesign -f -s - ./work/claude.npm-native.macos.no-thinking.patched
+          ./work/claude.npm-native.macos.no-thinking.patched --version
 
       - name: Download native binary (macOS)
         id: native_macos
@@ -279,4 +335,6 @@ jobs:
             work/claude.native.macos.original \
             work/claude.native.macos.patched \
             work/claude.native.macos.no-inline-thinking.patched \
+            work/claude.npm-native.macos.patched \
+            work/claude.npm-native.macos.no-thinking.patched \
             --clobber
