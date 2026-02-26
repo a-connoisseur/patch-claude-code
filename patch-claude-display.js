@@ -10,7 +10,7 @@ function printHelp() {
   console.log("");
   console.log("Usage:");
   console.log(
-    "  node patch-claude-display.js [--file <path>] [--dry-run] [--restore] [--disable <ids>] [--codesign] [--codesign-identity <identity>] [--allow-size-change] [--list-patches]"
+    "  node patch-claude-display.js [--file <path>] [--dry-run] [--restore] [--disable <ids>] [--enable <ids>] [--codesign] [--codesign-identity <identity>] [--allow-size-change] [--list-patches]"
   );
   console.log("");
   console.log("Options:");
@@ -18,6 +18,7 @@ function printHelp() {
   console.log("  --dry-run       Show what would change without writing");
   console.log("  --restore       Restore from backup");
   console.log("  --disable <ids> Comma-separated patch ids to disable");
+  console.log("  --enable <ids>  Comma-separated opt-in patch ids to enable");
   console.log("  --codesign      Re-sign target with macOS codesign after patch/restore");
   console.log("  --codesign-identity <id> codesign identity (default: - for ad-hoc)");
   console.log("  --allow-size-change Allow size-changing edits on binary targets (usually non-runnable)");
@@ -44,6 +45,7 @@ function parseArgs(argv) {
     dryRun: false,
     restore: false,
     disable: [],
+    enable: [],
     listPatches: false,
     codesign: false,
     codesignIdentity: "-",
@@ -70,6 +72,13 @@ function parseArgs(argv) {
         throw new Error("Missing value for --disable");
       }
       opts.disable.push(...parsePatchIds(value, "--disable"));
+      i += 1;
+    } else if (arg === "--enable") {
+      const value = argv[i + 1];
+      if (!value) {
+        throw new Error("Missing value for --enable");
+      }
+      opts.enable.push(...parsePatchIds(value, "--enable"));
       i += 1;
     } else if (arg === "--list-patches") {
       opts.listPatches = true;
@@ -767,6 +776,51 @@ function patchInstallerMigrationMessage(content, ctx = {}) {
   };
 }
 
+function patchForceNativeRuntime(content) {
+  const pattern =
+    /function ([A-Za-z_$][\w$]*)\(\)\{return typeof Bun<"u"&&Array\.isArray\(Bun\.embeddedFiles\)&&Bun\.embeddedFiles\.length>0\}/g;
+  let candidates = 0;
+  let patched = 0;
+
+  const output = content.replace(pattern, (full, fnName) => {
+    candidates += 1;
+    const replacement = `function ${fnName}(){return process.versions.bun!==void 0}`;
+    if (full !== replacement) {
+      patched += 1;
+      return replacement;
+    }
+    return full;
+  });
+
+  return {
+    content: output,
+    candidates,
+    patched,
+  };
+}
+
+function patchRipgrepForBunRuntime(content) {
+  const pattern =
+    /function ([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*)\)\{if\(process\.env\.RIPGREP_EMBEDDED==="true"\)return ([A-Za-z_$][\w$]*)\(process\.execPath,\["--no-config",\.\.\.\2\],\{argv0:"rg",stdio:"inherit"\}\)\.status\?\?1;/g;
+  let candidates = 0;
+  let patched = 0;
+
+  const output = content.replace(pattern, (full, fnName, argsName, spawnName) => {
+    candidates += 1;
+    if (full.includes("if(process.versions.bun!==void 0)return")) {
+      return full;
+    }
+    patched += 1;
+    return `${full}if(process.versions.bun!==void 0)return ${spawnName}("rg",["--no-config",...${argsName}],{stdio:"inherit"}).status??1;`;
+  });
+
+  return {
+    content: output,
+    candidates,
+    patched,
+  };
+}
+
 function patchTargetShebang(content) {
   const shebangPattern = /^#!\/usr\/bin\/env node([^\n]*)/;
   const hasNodeShebang = shebangPattern.test(content);
@@ -820,22 +874,46 @@ const PATCH_MODULES = [
     description: "Replace npm/native installer warning text with (patched)",
     apply: patchInstallerMigrationMessage,
   },
+  {
+    id: "ripgrep-bun-runtime",
+    description: "Use system rg for Bun runtime ripgrep entrypoint",
+    apply: patchRipgrepForBunRuntime,
+    defaultEnabled: false,
+  },
+  {
+    id: "native-runtime",
+    description: "Force Bun builds to run native-runtime code paths",
+    apply: patchForceNativeRuntime,
+    defaultEnabled: false,
+  },
 ];
 
 function resolveSelectedPatchIds(opts) {
   const valid = new Set(PATCH_MODULES.map((module) => module.id));
-  const invalid = [...opts.disable].filter((id) => !valid.has(id));
+  const invalid = [...opts.disable, ...opts.enable].filter((id) => !valid.has(id));
 
   if (invalid.length > 0) {
     throw new Error(`Unknown patch id(s): ${invalid.join(", ")}. Use --list-patches to see valid ids.`);
   }
 
-  const selected = new Set(PATCH_MODULES.map((module) => module.id));
-  for (const id of opts.disable) {
+  const enableSet = new Set(opts.enable);
+  const disableSet = new Set(opts.disable);
+  const conflicts = [...enableSet].filter((id) => disableSet.has(id));
+  if (conflicts.length > 0) {
+    throw new Error(`Conflicting patch id(s) in --enable and --disable: ${conflicts.join(", ")}`);
+  }
+
+  const selected = new Set(
+    PATCH_MODULES.filter((module) => module.defaultEnabled !== false).map((module) => module.id)
+  );
+  for (const id of enableSet) {
+    selected.add(id);
+  }
+  for (const id of disableSet) {
     selected.delete(id);
   }
 
-  return selected;
+  return { selected, disableSet };
 }
 
 function main() {
@@ -857,18 +935,20 @@ function main() {
   if (opts.listPatches) {
     console.log("Available patches:");
     for (const module of PATCH_MODULES) {
-      console.log(`  ${module.id} - ${module.description}`);
+      const optInLabel = module.defaultEnabled === false ? " (opt-in)" : "";
+      console.log(`  ${module.id}${optInLabel} - ${module.description}`);
     }
     process.exit(0);
   }
 
-  let selectedPatchIds;
+  let patchSelection;
   try {
-    selectedPatchIds = resolveSelectedPatchIds(opts);
+    patchSelection = resolveSelectedPatchIds(opts);
   } catch (error) {
     console.error(`Error: ${error.message}`);
     process.exit(1);
   }
+  const selectedPatchIds = patchSelection.selected;
 
   let targetPath;
   try {
@@ -928,11 +1008,15 @@ function main() {
 
   for (const module of PATCH_MODULES) {
     if (!selectedPatchIds.has(module.id)) {
+      const reason =
+        module.defaultEnabled === false && !patchSelection.disableSet.has(module.id)
+          ? "not enabled (opt-in)"
+          : "disabled";
       patchResults.set(module.id, {
         candidates: 0,
         patched: 0,
         skipped: true,
-        reason: "disabled",
+        reason,
       });
       continue;
     }

@@ -44,12 +44,18 @@ codesign -f -s - ./claude
 - `thinking-streaming`: make streamed thinking update live
 - `subagent-prompt`: show backgrounded agent `Prompt:` outside transcript mode
 - `installer-label`: replace migration warning text with `(patched)`
+- `ripgrep-bun-runtime` (opt-in): use system `rg` for Bun runtime ripgrep entrypoint
+- `native-runtime` (opt-in): force Bun-built binaries onto native runtime code paths
 
 ## Target-Specific Behavior
 
 ### npm JS target
 
-All modules are available.
+Default modules apply. Opt-in modules are skipped unless explicitly enabled:
+
+```bash
+node patch-claude-display.js --file ./claude.patched --enable native-runtime,ripgrep-bun-runtime
+```
 
 ### Native binary target
 
@@ -62,7 +68,7 @@ The patcher auto-enables size-preserving mode:
   - `installer-label`
 - Skips:
   - `shebang` (not applicable)
-  - size-changing modules (`create-diff-colors`, `word-diff-line-bg`, `thinking-streaming`)
+  - size-changing modules (`create-diff-colors`, `word-diff-line-bg`, `thinking-streaming`, `ripgrep-bun-runtime`, `native-runtime`)
 
 Reason: size-changing edits usually produce a non-runnable native binary even after re-signing.
 
