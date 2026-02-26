@@ -24,6 +24,9 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    outputs:
+      skip: ${{ steps.check.outputs.skip }}
+      tag: ${{ steps.check.outputs.tag }}
 
     steps:
       - name: Checkout repository
@@ -198,3 +201,82 @@ jobs:
             work/claude.native.original \
             work/claude.native.patched \
             work/claude.native.no-inline-thinking.patched
+
+  patch-macos-native:
+    needs: patch
+    if: needs.patch.outputs.skip != 'true'
+    runs-on: macos-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Download native binary (macOS)
+        id: native_macos
+        run: |
+          set -euo pipefail
+
+          mkdir -p work
+          NATIVE_HOME="$PWD/work/native-home-macos"
+          mkdir -p "$NATIVE_HOME"
+
+          curl -fsSL https://claude.ai/install.sh -o work/install-native.sh
+          chmod +x work/install-native.sh
+
+          if [ -n "${{ github.event.inputs.native_version }}" ]; then
+            HOME="$NATIVE_HOME" bash work/install-native.sh "${{ github.event.inputs.native_version }}"
+          else
+            HOME="$NATIVE_HOME" bash work/install-native.sh
+          fi
+
+          NATIVE_BIN="$NATIVE_HOME/.local/bin/claude"
+          if [ ! -x "$NATIVE_BIN" ]; then
+            NATIVE_BIN="$(find "$NATIVE_HOME" -type f -name 'claude' -perm -111 | head -n1 || true)"
+          fi
+
+          if [ -z "$NATIVE_BIN" ] || [ ! -x "$NATIVE_BIN" ]; then
+            echo "Could not locate installed native macOS claude binary."
+            find "$NATIVE_HOME" -maxdepth 6 -type f | head -n 200
+            exit 1
+          fi
+
+          NATIVE_VERSION="$("$NATIVE_BIN" --version | head -n1 | awk '{print $1}')"
+          echo "path=$NATIVE_BIN" >> "$GITHUB_OUTPUT"
+          echo "version=$NATIVE_VERSION" >> "$GITHUB_OUTPUT"
+
+          cp "$NATIVE_BIN" work/claude.native.macos.original
+          chmod +x work/claude.native.macos.original
+
+      - name: Apply display patches (native macOS)
+        run: |
+          set -euo pipefail
+
+          cp work/claude.native.macos.original work/claude.native.macos.patched
+          node patch-claude-display.js --file ./work/claude.native.macos.patched
+          codesign -f -s - ./work/claude.native.macos.patched
+          ./work/claude.native.macos.patched --version
+
+          cp work/claude.native.macos.original work/claude.native.macos.no-inline-thinking.patched
+          node patch-claude-display.js --file ./work/claude.native.macos.no-inline-thinking.patched --disable thinking-inline
+          codesign -f -s - ./work/claude.native.macos.no-inline-thinking.patched
+          ./work/claude.native.macos.no-inline-thinking.patched --version
+
+      - name: Upload macOS native assets to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="${{ needs.patch.outputs.tag }}"
+
+          gh release upload "$TAG" \
+            work/claude.native.macos.original \
+            work/claude.native.macos.patched \
+            work/claude.native.macos.no-inline-thinking.patched \
+            --clobber

@@ -95,7 +95,8 @@ Current pipeline:
 
 1. Pull npm package and patch `cli.js` (full + no-inline variant).
 2. Pull native Linux build via `https://claude.ai/install.sh` and patch binary (full + no-inline variant).
-3. Publish release with originals + patched outputs + metadata.
+3. Pull native macOS build on `macos-latest`, patch binary, and ad-hoc sign outputs.
+4. Publish release with originals + patched outputs + metadata.
 
 ## Troubleshooting
 

@@ -1,96 +1,42 @@
 # Patch Claude Code
 
-This repo contains a patcher for Claude Code bundles (`cli.js` from npm) and native binaries (`claude` executable).
+## What this does
 
-## What it patches
+This repo publishes patched Claude binaries that make output more transparent in normal mode:
 
-1. Show detailed tool calls without verbose mode.
-2. Show thinking inline without verbose mode.
-3. Stream thinking while it is generated.
-4. Show subagent `Prompt:` blocks outside transcript mode.
-5. Render create-file output as diff-style `+` lines.
-6. Keep muted line backgrounds in word-diff mode.
-7. Replace the npm/native migration warning text with `(patched)`.
-8. Rewrite `#!/usr/bin/env node` to `#!/usr/bin/env bun` for npm JS targets.
+- Shows detailed tool calls instead of collapsed summaries.
+- Shows thinking inline (unless you choose a `no-inline-thinking` asset).
+- Shows subagent `Prompt:` blocks by default.
 
-## Target Behavior Matrix
+## Quick Start (From Releases)
 
-- npm JS target (`cli.js`): all patches are available.
-- Native binary target (`claude`): patcher uses size-preserving mode by default.
-  - Applied: `tool-call-verbose`, `thinking-inline`, `subagent-prompt`, `installer-label`
-  - Skipped (size-changing): `create-diff-colors`, `word-diff-line-bg`, `thinking-streaming`
-  - Skipped: `shebang` (not applicable to binary targets)
+1. Download one asset from this repo's Releases page:
+   - Native build (Linux): `claude.native.patched`
+   - Native build (macOS): `claude.native.macos.patched`
+   - npm install: `claude.patched`
+2. If you do not want inline thinking, use the matching `no-inline-thinking` asset instead.
+3. Follow the below instructions depending on your platform:
 
-Why: on native binaries, size-changing edits usually make the binary non-runnable even after re-signing.
-
-## Usage
-
-Patch local `./claude`:
+### Native build (Linux)
 
 ```bash
-node patch-claude-display.js --file ./claude
+chmod +x ./claude.native.patched
+sudo mv ./claude.native.patched "$(which claude)"
+claude --version
 ```
 
-Patch and re-sign (macOS native binary):
+### Native build (macOS)
 
 ```bash
-node patch-claude-display.js --file ./claude --codesign
+chmod +x ./claude.native.macos.patched
+sudo mv ./claude.native.macos.patched "$(which claude)"
+claude --version
 ```
 
-Dry run:
+### NPM Install
 
 ```bash
-node patch-claude-display.js --file ./claude --dry-run
+chmod +x ./claude.patched
+sudo mv claude.patched $(readlink -f $(which claude))
+claude --version
 ```
-
-Patch npm bundle file:
-
-```bash
-node patch-claude-display.js --file /path/to/cli.js
-```
-
-Disable modules:
-
-```bash
-node patch-claude-display.js --file ./claude --disable thinking-inline
-```
-
-Restore backup:
-
-```bash
-node patch-claude-display.js --file ./claude --restore
-```
-
-List patch IDs:
-
-```bash
-node patch-claude-display.js --list-patches
-```
-
-The script creates a one-time backup at `<target>.display.backup`.
-
-## Native Binary Notes
-
-- Binary targets are patched with byte-preserving I/O.
-- Size-preserving mode is automatic for binary targets.
-- `--allow-size-change` exists, but on native binaries it is typically non-runnable.
-- On macOS, use ad-hoc signing after patching:
-
-```bash
-codesign -f -s - /path/to/claude
-```
-
-The patcher can run this directly with `--codesign`.
-
-## GitHub Actions
-
-Workflow: `.github/workflows/patch-claude-from-npm.yml`
-
-It currently:
-
-1. Downloads `@anthropic-ai/claude-code` from npm and patches `cli.js`.
-2. Downloads the native Linux build via `https://claude.ai/install.sh` and patches the native `claude` binary.
-3. Produces both full and `--disable thinking-inline` variants for npm and native targets.
-4. Publishes release assets with metadata, original files, and patched outputs.
-
-Scheduled every 6 hours and runnable manually from Actions.
