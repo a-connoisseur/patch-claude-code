@@ -1,210 +1,113 @@
 # Claude Display Patch Playbook
 
-This playbook covers both desired behaviors for future Claude Code updates:
+This playbook covers patching both Claude Code packaging styles:
 
-1. Always show detailed tool calls (no "Read X files" collapsed summary)
-2. Always show thinking inline (no hidden thinking)
-3. Stream thinking while it is generated (not only after the block completes)
-4. Show add-only write results with diff-style coloring (green `+` lines)
-5. Always show subagent `Prompt:` blocks (not only in transcript/Ctrl+O mode)
-6. Replace npm-installer migration warning text with `"(patched)"`
+1. npm JS bundle (`cli.js`)
+2. native executable (`claude` binary)
 
 ## Fast Path
 
-Run the generic patcher in this repo:
+Patch target in place:
 
 ```bash
 node patch-claude-display.js --file ./claude
 ```
 
-Optional modes:
+Useful modes:
 
 ```bash
 node patch-claude-display.js --file ./claude --dry-run
 node patch-claude-display.js --file ./claude --restore
 node patch-claude-display.js --list-patches
-node patch-claude-display.js --file ./claude --disable create-diff-colors,word-diff-line-bg
-node patch-claude-display.js --file ./claude --disable thinking-inline,thinking-streaming,subagent-prompt,create-diff-colors,word-diff-line-bg
+node patch-claude-display.js --file ./claude --disable thinking-inline
 ```
 
-The script creates a one-time backup at `./claude.display.backup`.
-
-Use `--disable <id1,id2,...>` to turn off specific modules.
-
-## What It Patches
-
-### 1) Collapsed read/search summaries
-
-Target shape:
-
-```js
-case"collapsed_read_search":return X.createElement(Y,{...,verbose:w,...})
-```
-
-Patch:
-
-```js
-verbose:!0
-```
-
-Result: UI always renders verbose tool entries instead of collapsed "Read X files" summaries.
-
-### 2) Thinking visibility
-
-Target shape (varies per minified version):
-
-```js
-case"thinking":{if(!A&&!B[&&!C])return null; ... isTranscriptMode:A ... [hideInTranscript:T] ...}
-```
-
-Patch:
-
-1. Remove the early return guard `if(!...&&!...)return null;`
-2. Force `isTranscriptMode:!0`
-3. If present, force `hideInTranscript:!1`
-
-Result: thinking blocks render inline consistently.
-
-### 3) Created-file diff coloring
-
-Target shape:
-
-```js
-case"create": ... return createElement(QIY,{filePath:A,content:q,verbose:v})
-case"update": return createElement(AG1,{filePath:A,structuredPatch:K,...})
-```
-
-Patch:
-
-```js
-case"create": ... return createElement(AG1,{
-  filePath:A,
-  structuredPatch:[{oldStart:1,oldLines:0,newStart:1,newLines:Wl4(q),lines:q===""?[]:q.split(`\n`).map((L)=>"+"+L)}],
-  firstLine:q.split(`\n`)[0]??null,
-  fileContent:"",
-  ...
-})
-```
-
-Result: file-creation output renders through the diff component, so added lines get the same green/red diff palette as edit/write updates.
-
-Also patches word-diff rendering so `+`/`-` lines keep muted line background colors even when inline word highlights are present.
-
-### 4) Thinking streaming
-
-Patch both behaviors in message rendering:
-
-1. In the main non-transcript renderer call (identified by props such as `toolJSX`, `streamingToolUses`, `agentDefinitions`, `onOpenRateLimitOptions`), pass through `streamingThinking`.
-2. In the streaming-thinking memo cache gate, compare/store by `?.thinking` text instead of object identity.
-3. Replace message-row `memo(...)` wrapping by comparator-shape matching (checks like `screen`, `columns`, `lastThinkingBlockId`, `streamingToolUseIDs`), not symbol names.
-4. In stream-event handling, reset thinking state on `stream_request_start`, append on `thinking_delta`, and clear transient state on `message_stop`.
-5. Remove the `streamingEndedAt<30000` window so the transient stream block is active only while streaming.
-
-Result: thinking text updates per delta while streaming, instead of only after completion.
-
-### 5) Subagent prompt visibility
-
-Target shape:
-
-```js
-function ...( ... isTranscriptMode:X=!1 ... ){
-  ... "Backgrounded agent" ...
-  ... fallback:"ctrl+o" ...
-  ... X&&P&&createElement(...,{prompt:P,theme:T}) ...
-}
-```
-
-Patch:
-
-```js
-P&&createElement(...,{prompt:P,theme:T})
-```
-
-Result: subagent `Prompt:` blocks are visible in default mode, not only in transcript mode.
-
-### 6) NPM migration warning text
-
-Target: the long notification string containing:
-
-```text
-switched from npm to native installer
-```
-
-Patch the entire string literal payload to:
-
-```text
-(patched)
-```
-
-## Validation After Patch
-
-Use this quick check:
+macOS native binary signing:
 
 ```bash
-node -e 'const fs=require("fs");const s=fs.readFileSync("claude","utf8");console.log("tool verbose forced:",/case\"collapsed_read_search\":return[\\s\\S]{0,240}?verbose:!0/.test(s));console.log("thinking transcript forced:",/case\"thinking\":[\\s\\S]{0,700}?isTranscriptMode:!0/.test(s));console.log("thinking not hidden:",/case\"thinking\":[\\s\\S]{0,900}?hideInTranscript:!1/.test(s));'
+node patch-claude-display.js --file ./claude --codesign
 ```
 
-If `hideInTranscript` does not exist in a version, the third check may be `false` and that is acceptable.
-
-Created-file diff coloring check:
+or manually:
 
 ```bash
-node -e 'const fs=require("fs");const s=fs.readFileSync("claude","utf8");console.log("write create uses diff renderer:",/case\"create\":[\\s\\S]{0,900}?structuredPatch:\[\{oldStart:1,oldLines:0,newStart:1/.test(s));'
+codesign -f -s - ./claude
 ```
 
-Thinking streaming checks:
+## Patch Modules
 
-```bash
-node -e 'const fs=require("fs");const s=fs.readFileSync("claude","utf8");console.log("prompt renderer receives streamingThinking:",/createElement\\([A-Za-z_$][\\w$]*,\\{[^}]*toolJSX:[^}]*streamingToolUses:[^}]*streamingThinking:[^}]*\\}\\)/.test(s));console.log("streaming memo compares thinking text:",/\\?\\.thinking/.test(s));'
-```
+- `shebang`: `#!/usr/bin/env node` -> `#!/usr/bin/env bun`
+- `tool-call-verbose`: force verbose collapsed read/search output
+- `create-diff-colors`: render create-file output through diff renderer
+- `word-diff-line-bg`: keep muted `+`/`-` line backgrounds in word-diff mode
+- `thinking-inline`: always render thinking blocks
+- `thinking-streaming`: make streamed thinking update live
+- `subagent-prompt`: show backgrounded agent `Prompt:` outside transcript mode
+- `installer-label`: replace migration warning text with `(patched)`
 
-```bash
-node -e 'const fs=require("fs");const s=fs.readFileSync("claude","utf8");console.log("row comparator still present (shape anchor):",s.includes(".lastThinkingBlockId")&&s.includes(".streamingToolUseIDs"));console.log("no 30s linger window:",!/streamingEndedAt<30000/.test(s));'
-```
+## Target-Specific Behavior
 
-```bash
-node -e 'const fs=require("fs");const s=fs.readFileSync("claude","utf8");console.log("stream handler resets on request start:",/type===\"stream_request_start\"\\)\\{[^}]{0,180}\\?\\.\\(null\\),[^}]{0,120}\\(\"requesting\"\\)/.test(s));console.log("thinking deltas update streaming state:",/case\"thinking_delta\":[\\s\\S]{0,260}isStreaming:!0/.test(s));console.log("stream state clears on message stop:",/event\\.type===\"message_stop\"\\)\\{[^}]{0,220}\\?\\.\\(null\\),[^}]{0,120}\\(\"tool-use\"\\)/.test(s));'
-```
+### npm JS target
 
-```bash
-node -e 'const fs=require("fs");const s=fs.readFileSync("claude","utf8");console.log("inline thinking renderer present:",/case\"thinking\":\\{[^}]{0,900}createElement\\([A-Za-z_$][\\w$]*,\\{[^}]*isTranscriptMode:!0/.test(s));console.log("transient streamed-thinking renderer present:",/createElement\\([A-Za-z_$][\\w$]*,\\{marginTop:1\\},[A-Za-z_$][\\w$]*\\.createElement\\([A-Za-z_$][\\w$]*,\\{param:\\{type:\"thinking\",thinking:[A-Za-z_$][\\w$]*\\.thinking\\}/.test(s));'
-```
+All modules are available.
 
-Subagent prompt visibility check:
+### Native binary target
 
-```bash
-node -e 'const fs=require("fs");const s=fs.readFileSync("claude","utf8");console.log("subagent prompt not transcript-gated:",!/isTranscriptMode:[A-Za-z_$][\\w$]*=!1[\\s\\S]{0,1300}[A-Za-z_$][\\w$]*&&[A-Za-z_$][\\w$]*&&[A-Za-z_$][\\w$]*\\.createElement\\([A-Za-z_$][\\w$]*,null,[A-Za-z_$][\\w$]*\\.createElement\\([A-Za-z_$][\\w$]*,\\{prompt:[A-Za-z_$][\\w$]*,theme:[A-Za-z_$][\\w$]*\\}\\)\\)/.test(s));'
-```
+The patcher auto-enables size-preserving mode:
 
-## If a Future Update Breaks the Script
+- Applies:
+  - `tool-call-verbose`
+  - `thinking-inline`
+  - `subagent-prompt`
+  - `installer-label`
+- Skips:
+  - `shebang` (not applicable)
+  - size-changing modules (`create-diff-colors`, `word-diff-line-bg`, `thinking-streaming`)
 
-1. Find candidate tool renderer blocks:
-```bash
-node -e 'const fs=require("fs");const s=fs.readFileSync("claude","utf8");let i=-1,n=0;while((i=s.indexOf("case\"collapsed_read_search\":",i+1))!==-1){n++;console.log("collapsed_read_search #"+n,"at",i);console.log(s.slice(Math.max(0,i-120),Math.min(s.length,i+260)));}'
-```
+Reason: size-changing edits usually produce a non-runnable native binary even after re-signing.
 
-2. Find candidate thinking blocks:
-```bash
-node -e 'const fs=require("fs");const s=fs.readFileSync("claude","utf8");let i=-1,n=0;while((i=s.indexOf("case\"thinking\":",i+1))!==-1){n++;console.log("thinking #"+n,"at",i);console.log(s.slice(Math.max(0,i-120),Math.min(s.length,i+360)));}'
-```
+## Validation
 
-3. Update the script matching logic in `patch-claude-display.js`:
-   - `patchCollapsedReadSearch()`
-   - `patchThinkingCase()`
-   - `patchThinkingStreaming()`
+List module outcomes:
 
-4. Re-run dry-run first:
 ```bash
 node patch-claude-display.js --file ./claude --dry-run
 ```
 
-5. Apply and validate.
+Quick target checks:
 
-## Reuse Prompt (for future turns)
+```bash
+file ./claude
+./claude --version
+```
 
-Use this exact instruction:
+For patched macOS binaries:
+
+```bash
+codesign --verify --verbose=2 ./claude
+```
+
+## CI/CD
+
+Workflow: `.github/workflows/patch-claude-from-npm.yml`
+
+Current pipeline:
+
+1. Pull npm package and patch `cli.js` (full + no-inline variant).
+2. Pull native Linux build via `https://claude.ai/install.sh` and patch binary (full + no-inline variant).
+3. Publish release with originals + patched outputs + metadata.
+
+## Troubleshooting
+
+If a module stops matching after upstream updates:
+
+1. Run dry-run and inspect candidate/patch counts.
+2. Locate nearby anchors in the target with `rg -a`.
+3. Update matcher logic in `patch-claude-display.js`.
+4. Re-run dry-run before applying.
+
+## Reuse Prompt
 
 ```text
-Patch the current claude JS using PATCHING_PLAYBOOK.md.
-Apply display patches (tool calls verbose + thinking inline + thinking streaming + subagent prompt visibility), run verification, and report what changed.
+Patch the current Claude target using PATCHING_PLAYBOOK.md, run verification, and report which modules were applied or skipped.
 ```

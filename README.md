@@ -1,122 +1,96 @@
 # Patch Claude Code
 
-This repo contains a patcher for Claude Code's bundled JS file (`claude` / `cli.js`).
+This repo contains a patcher for Claude Code bundles (`cli.js` from npm) and native binaries (`claude` executable).
 
-Releases include two patched binaries:
-- `claude.patched` (all patches, including colored file diff patches)
-- `claude.no-inline-thinking.patched` (all patches except inline thinking visibility)
+## What it patches
 
-## What it does
-Patches Claude Code to:
-  
-1) Show tool calls (files read, patterns searched, so on) _without verbose mode_
-2) Show thinking inline _without verbose mode_
-3) Stream thinking while it is generated
-4) Always show subagent `Prompt:` blocks (not only in transcript/Ctrl+O mode)
-5) Show add-only write results using diff-style coloring (green `+` lines)
-6) Use `bun` instead of `node` by default (Claude Code doesn't work well with node for some people)
+1. Show detailed tool calls without verbose mode.
+2. Show thinking inline without verbose mode.
+3. Stream thinking while it is generated.
+4. Show subagent `Prompt:` blocks outside transcript mode.
+5. Render create-file output as diff-style `+` lines.
+6. Keep muted line backgrounds in word-diff mode.
+7. Replace the npm/native migration warning text with `(patched)`.
+8. Rewrite `#!/usr/bin/env node` to `#!/usr/bin/env bun` for npm JS targets.
 
-The patch script is included in case you want to do it yourself.
+## Target Behavior Matrix
 
-## How to use
-1) If you've obtained Claude Code via methods other than `npm`, [uninstall](https://code.claude.com/docs/en/setup#uninstall-claude-code) it.
-2) Install Claude Code via npm: `sudo npm install -g @anthropic-ai/claude-code` (or any other preferred method)
-3) Make sure `installMethod` is set to `npm` in `~/.claude.json`:
-   ```json
-   "installMethod": "npm",
-   ```
+- npm JS target (`cli.js`): all patches are available.
+- Native binary target (`claude`): patcher uses size-preserving mode by default.
+  - Applied: `tool-call-verbose`, `thinking-inline`, `subagent-prompt`, `installer-label`
+  - Skipped (size-changing): `create-diff-colors`, `word-diff-line-bg`, `thinking-streaming`
+  - Skipped: `shebang` (not applicable to binary targets)
 
-4) Obtain `claude.patched` from [here](https://github.com/a-connoisseur/patch-claude-code/releases) _(or patch it yourself using the script in this repo)_ and put it in `PATH`:
-   ```bash
-   chmod a+x claude.patched
-   sudo mv claude.patched $(readlink -f $(which claude))
-   ```
-
-   If you do not want inline thinking visibility, use `claude.no-inline-thinking.patched`.
-
-## How can I trust this?
-It takes Claude Code from npm, published by Anthropic, and runs a patch script on it which you can find in this repository. The release is created by Github Actions. You're also free to patch it yourself on your own machine.
-
-
-## GitHub Actions
-
-Manual workflow: `.github/workflows/patch-claude-from-npm.yml`
-
-It:
-- Downloads `@anthropic-ai/claude-code` from npm
-- Extracts `cli.js`
-- Applies the patch script in two module configurations (full/default and `--disable thinking-inline`)
-- Uploads release assets with metadata + original + two patched files
-
-Runs every 6 hours, but in case a new version is out and the releases page of this repo has not been updated, you can fork it and run the action yourself, manually, from the actions tab.
-
-
-## How it works
-
-`patch-claude-display.js` applies these changes:
-
-1. Shebang rewrite:
-   - `#!/usr/bin/env node` -> `#!/usr/bin/env bun`
-2. Tool call visibility:
-   - Forces `collapsed_read_search` groups to render with `verbose:!0`
-   - Prevents collapsed summaries like "Read X files"
-3. Created-file diff coloring:
-   - Rewrites write-result `case"create"` rendering to use the same diff renderer as updates
-   - Synthesizes a one-hunk `structuredPatch` with `+` lines for new file content
-   - Forces muted add/remove line backgrounds in word-diff mode so unchanged parts of `+`/`-` lines stay tinted
-4. Thinking visibility:
-   - Forces `isTranscriptMode:!0`
-   - Forces `hideInTranscript:!1` when present
-   - Removes early `case"thinking"` guard that returns `null`
-5. Thinking streaming:
-   - Wires `streamingThinking` into the main non-transcript renderer call by prop-shape matching
-   - Uses a name-agnostic memo-cache rewrite so streaming keys track `?.thinking` text
-   - Disables message-row memoization via comparator-shape matching (not symbol names)
-   - Patches stream-event handling via stable event literals (`stream_request_start`, `thinking_delta`, `message_stop`)
-   - Clears transient streamed-thinking state on `message_stop` (inline final thinking remains in message flow)
-   - Removes the 30s post-stop linger window logic
-6. Subagent prompt visibility:
-   - Finds the subagent renderer by stable UI literals (`"Backgrounded agent"`, `fallback:"ctrl+o"`, `action:"app:toggleTranscript"`)
-   - Removes only the `isTranscriptMode` gate from `prompt` blocks, so `Prompt:` is shown in default mode too
-7. Installer warning text:
-   - Replaces the full npm/native-installer warning string with `"(patched)"`
+Why: on native binaries, size-changing edits usually make the binary non-runnable even after re-signing.
 
 ## Usage
 
-Patch local `./claude` automatically:
+Patch local `./claude`:
 
 ```bash
-node patch-claude-display.js
+node patch-claude-display.js --file ./claude
 ```
 
-Patch a specific file:
+Patch and re-sign (macOS native binary):
 
 ```bash
-node patch-claude-display.js --file /path/to/cli.js
+node patch-claude-display.js --file ./claude --codesign
 ```
 
 Dry run:
 
 ```bash
-node patch-claude-display.js --dry-run
+node patch-claude-display.js --file ./claude --dry-run
 ```
 
-List available patch module IDs:
+Patch npm bundle file:
 
 ```bash
-node patch-claude-display.js --list-patches
+node patch-claude-display.js --file /path/to/cli.js
 ```
 
-Disable inline thinking visibility only:
+Disable modules:
 
 ```bash
-node patch-claude-display.js --disable thinking-inline
+node patch-claude-display.js --file ./claude --disable thinking-inline
 ```
 
 Restore backup:
 
 ```bash
-node patch-claude-display.js --file /path/to/cli.js --restore
+node patch-claude-display.js --file ./claude --restore
 ```
 
-The script creates a backup at `<target>.display.backup`.
+List patch IDs:
+
+```bash
+node patch-claude-display.js --list-patches
+```
+
+The script creates a one-time backup at `<target>.display.backup`.
+
+## Native Binary Notes
+
+- Binary targets are patched with byte-preserving I/O.
+- Size-preserving mode is automatic for binary targets.
+- `--allow-size-change` exists, but on native binaries it is typically non-runnable.
+- On macOS, use ad-hoc signing after patching:
+
+```bash
+codesign -f -s - /path/to/claude
+```
+
+The patcher can run this directly with `--codesign`.
+
+## GitHub Actions
+
+Workflow: `.github/workflows/patch-claude-from-npm.yml`
+
+It currently:
+
+1. Downloads `@anthropic-ai/claude-code` from npm and patches `cli.js`.
+2. Downloads the native Linux build via `https://claude.ai/install.sh` and patches the native `claude` binary.
+3. Produces both full and `--disable thinking-inline` variants for npm and native targets.
+4. Publishes release assets with metadata, original files, and patched outputs.
+
+Scheduled every 6 hours and runnable manually from Actions.

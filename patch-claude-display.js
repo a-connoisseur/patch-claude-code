@@ -20,7 +20,7 @@ function printHelp() {
   console.log("  --disable <ids> Comma-separated patch ids to disable");
   console.log("  --codesign      Re-sign target with macOS codesign after patch/restore");
   console.log("  --codesign-identity <id> codesign identity (default: - for ad-hoc)");
-  console.log("  --allow-size-change Allow size-changing edits on Mach-O targets (usually non-runnable)");
+  console.log("  --allow-size-change Allow size-changing edits on binary targets (usually non-runnable)");
   console.log("  --list-patches  Print available patch ids and exit");
   console.log("  --help, -h      Show this help");
 }
@@ -115,6 +115,25 @@ function looksLikeMachO(filePath) {
       return false;
     }
     return magics.has(header.toString("hex"));
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+function looksLikeBinary(filePath) {
+  const fd = fs.openSync(filePath, "r");
+  try {
+    const sample = Buffer.alloc(4096);
+    const bytesRead = fs.readSync(fd, sample, 0, sample.length, 0);
+    if (bytesRead === 0) {
+      return false;
+    }
+    for (let i = 0; i < bytesRead; i += 1) {
+      if (sample[i] === 0) {
+        return true;
+      }
+    }
+    return false;
   } finally {
     fs.closeSync(fd);
   }
@@ -859,16 +878,6 @@ function main() {
     process.exit(1);
   }
   const backupPath = `${targetPath}.display.backup`;
-  const isMachOTarget = looksLikeMachO(targetPath);
-  const preserveLength = isMachOTarget && !opts.allowSizeChange;
-
-  if (preserveLength) {
-    console.log("Detected Mach-O target: running in size-preserving mode.");
-    console.log("Size-changing modules will be skipped automatically.");
-  } else if (isMachOTarget && opts.allowSizeChange) {
-    console.log("Detected Mach-O target with --allow-size-change.");
-    console.log("Warning: size-changing patches usually produce a non-runnable binary.");
-  }
 
   if (opts.restore) {
     if (!fs.existsSync(backupPath)) {
@@ -901,6 +910,18 @@ function main() {
   }
 
   ensureFileExists(targetPath);
+  const isMachOTarget = looksLikeMachO(targetPath);
+  const isBinaryTarget = looksLikeBinary(targetPath);
+  const preserveLength = isBinaryTarget && !opts.allowSizeChange;
+
+  if (preserveLength) {
+    console.log("Detected binary target: running in size-preserving mode.");
+    console.log("Size-changing modules will be skipped automatically.");
+  } else if (isBinaryTarget && opts.allowSizeChange) {
+    console.log("Detected binary target with --allow-size-change.");
+    console.log("Warning: size-changing patches usually produce a non-runnable binary.");
+  }
+
   const original = fs.readFileSync(targetPath, TARGET_FILE_ENCODING);
   let currentContent = original;
   const patchResults = new Map();
@@ -916,12 +937,12 @@ function main() {
       continue;
     }
 
-    if (isMachOTarget && module.id === "shebang") {
+    if (isBinaryTarget && module.id === "shebang") {
       patchResults.set(module.id, {
         candidates: 0,
         patched: 0,
         skipped: true,
-        reason: "not applicable for Mach-O",
+        reason: "not applicable for binary target",
       });
       continue;
     }

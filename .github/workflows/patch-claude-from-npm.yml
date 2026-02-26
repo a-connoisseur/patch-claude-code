@@ -1,4 +1,4 @@
-name: Patch Claude From npm
+name: Patch Claude From npm + native
 
 on:
   schedule:
@@ -7,6 +7,10 @@ on:
     inputs:
       package_version:
         description: "Optional @anthropic-ai/claude-code version (for example: 2.1.45). Leave empty for latest."
+        required: false
+        default: ""
+      native_version:
+        description: "Optional native installer version (for example: 2.1.59). Leave empty for latest."
         required: false
         default: ""
       force:
@@ -109,6 +113,56 @@ jobs:
           cp work/claude.original work/claude.no-inline-thinking.patched
           node patch-claude-display.js --file ./work/claude.no-inline-thinking.patched --disable thinking-inline
 
+      - name: Download native binary (Linux)
+        if: steps.check.outputs.skip != 'true'
+        id: native
+        run: |
+          set -euo pipefail
+
+          mkdir -p work
+          NATIVE_HOME="$PWD/work/native-home"
+          mkdir -p "$NATIVE_HOME"
+
+          curl -fsSL https://claude.ai/install.sh -o work/install-native.sh
+          chmod +x work/install-native.sh
+
+          if [ -n "${{ github.event.inputs.native_version }}" ]; then
+            HOME="$NATIVE_HOME" bash work/install-native.sh "${{ github.event.inputs.native_version }}"
+          else
+            HOME="$NATIVE_HOME" bash work/install-native.sh
+          fi
+
+          NATIVE_BIN="$NATIVE_HOME/.local/bin/claude"
+          if [ ! -x "$NATIVE_BIN" ]; then
+            NATIVE_BIN="$(find "$NATIVE_HOME" -type f -name 'claude' -perm -111 | head -n1 || true)"
+          fi
+
+          if [ -z "$NATIVE_BIN" ] || [ ! -x "$NATIVE_BIN" ]; then
+            echo "Could not locate installed native claude binary."
+            find "$NATIVE_HOME" -maxdepth 6 -type f | head -n 200
+            exit 1
+          fi
+
+          NATIVE_VERSION="$("$NATIVE_BIN" --version | head -n1 | awk '{print $1}')"
+          echo "path=$NATIVE_BIN" >> "$GITHUB_OUTPUT"
+          echo "version=$NATIVE_VERSION" >> "$GITHUB_OUTPUT"
+
+          cp "$NATIVE_BIN" work/claude.native.original
+          chmod +x work/claude.native.original
+
+      - name: Apply display patches (native Linux)
+        if: steps.check.outputs.skip != 'true'
+        run: |
+          set -euo pipefail
+
+          cp work/claude.native.original work/claude.native.patched
+          node patch-claude-display.js --file ./work/claude.native.patched
+          ./work/claude.native.patched --version
+
+          cp work/claude.native.original work/claude.native.no-inline-thinking.patched
+          node patch-claude-display.js --file ./work/claude.native.no-inline-thinking.patched --disable thinking-inline
+          ./work/claude.native.no-inline-thinking.patched --version
+
       - name: Write metadata
         if: steps.check.outputs.skip != 'true'
         run: |
@@ -116,6 +170,9 @@ jobs:
           {
             echo "package_spec=${{ steps.spec.outputs.value }}"
             echo "source_cli_path=${{ steps.extract.outputs.cli_path }}"
+            echo "native_install_script=https://claude.ai/install.sh"
+            echo "native_version=${{ steps.native.outputs.version }}"
+            echo "native_binary_path=${{ steps.native.outputs.path }}"
             echo "run_id=${{ github.run_id }}"
             echo "run_attempt=${{ github.run_attempt }}"
           } > work/metadata.txt
@@ -127,13 +184,17 @@ jobs:
         run: |
           set -euo pipefail
           VERSION="${{ steps.extract.outputs.version }}"
+          NATIVE_VERSION="${{ steps.native.outputs.version }}"
           TAG="${{ steps.check.outputs.tag }}"
           TITLE="${{ steps.check.outputs.title }}"
 
           gh release create "$TAG" \
             --title "$TITLE" \
-            --notes "Patched from \`@anthropic-ai/claude-code@${VERSION}\`" \
+            --notes "Patched from \`@anthropic-ai/claude-code@${VERSION}\` and native Linux build \`${NATIVE_VERSION}\`" \
             work/metadata.txt \
             work/claude.original \
             work/claude.patched \
-            work/claude.no-inline-thinking.patched
+            work/claude.no-inline-thinking.patched \
+            work/claude.native.original \
+            work/claude.native.patched \
+            work/claude.native.no-inline-thinking.patched
