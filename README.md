@@ -2,12 +2,12 @@
 
 ## What this does
 
-This repo publishes patched npm-native Claude binaries that make output more transparent in normal mode:
+This repo publishes patched native Claude binaries that make output more transparent _without_ verbose mode:
 
 - Shows detailed tool calls instead of collapsed summaries.
-- Shows thinking inline (unless you choose a `no-inline-thinking` asset).
+- Shows thinking inline and streams it real time (unless you choose a `no-inline-thinking` asset).
 - Shows subagent `Prompt:` blocks by default.
-- Preserves native diff coloring via a `color-diff.node` sidecar.
+- Preserves syntax highlighting unlike the npm builds.
 
 ## Quick Start (From Releases, npm-native only)
 
@@ -43,14 +43,9 @@ claude --version
 chmod +x ./claude.npm-native.macos.patched
 sudo mv ./claude.npm-native.macos.patched "$(which claude)"
 sudo mv ./claude.npm-native.macos.patched.color-diff.node "$(which claude).color-diff.node"
-claude --version
-```
-
-If macOS blocks execution due to quarantine:
-
-```bash
 xattr -dr com.apple.quarantine "$(which claude)"
 xattr -dr com.apple.quarantine "$(which claude).color-diff.node"
+claude --version
 ```
 
 ## Notes
