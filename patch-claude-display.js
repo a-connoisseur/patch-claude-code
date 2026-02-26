@@ -1,5 +1,8 @@
 const fs = require("fs");
 const path = require("path");
+const { execFileSync } = require("child_process");
+
+const TARGET_FILE_ENCODING = "latin1";
 
 function printHelp() {
   console.log("Claude display patcher");
@@ -7,7 +10,7 @@ function printHelp() {
   console.log("");
   console.log("Usage:");
   console.log(
-    "  node patch-claude-display.js [--file <path>] [--dry-run] [--restore] [--disable <ids>] [--list-patches]"
+    "  node patch-claude-display.js [--file <path>] [--dry-run] [--restore] [--disable <ids>] [--codesign] [--codesign-identity <identity>] [--allow-size-change] [--list-patches]"
   );
   console.log("");
   console.log("Options:");
@@ -15,6 +18,9 @@ function printHelp() {
   console.log("  --dry-run       Show what would change without writing");
   console.log("  --restore       Restore from backup");
   console.log("  --disable <ids> Comma-separated patch ids to disable");
+  console.log("  --codesign      Re-sign target with macOS codesign after patch/restore");
+  console.log("  --codesign-identity <id> codesign identity (default: - for ad-hoc)");
+  console.log("  --allow-size-change Allow size-changing edits on Mach-O targets (usually non-runnable)");
   console.log("  --list-patches  Print available patch ids and exit");
   console.log("  --help, -h      Show this help");
 }
@@ -39,6 +45,9 @@ function parseArgs(argv) {
     restore: false,
     disable: [],
     listPatches: false,
+    codesign: false,
+    codesignIdentity: "-",
+    allowSizeChange: false,
     help: false,
   };
 
@@ -64,6 +73,18 @@ function parseArgs(argv) {
       i += 1;
     } else if (arg === "--list-patches") {
       opts.listPatches = true;
+    } else if (arg === "--codesign") {
+      opts.codesign = true;
+    } else if (arg === "--codesign-identity") {
+      const value = argv[i + 1];
+      if (!value) {
+        throw new Error("Missing value for --codesign-identity");
+      }
+      opts.codesignIdentity = value;
+      opts.codesign = true;
+      i += 1;
+    } else if (arg === "--allow-size-change") {
+      opts.allowSizeChange = true;
     } else if (arg === "--help" || arg === "-h") {
       opts.help = true;
     } else {
@@ -72,6 +93,37 @@ function parseArgs(argv) {
   }
 
   return opts;
+}
+
+function looksLikeMachO(filePath) {
+  const magics = new Set([
+    "feedface",
+    "cefaedfe",
+    "feedfacf",
+    "cffaedfe",
+    "cafebabe",
+    "bebafeca",
+    "cafebabf",
+    "bfbafeca",
+  ]);
+
+  const fd = fs.openSync(filePath, "r");
+  try {
+    const header = Buffer.alloc(4);
+    const bytesRead = fs.readSync(fd, header, 0, 4, 0);
+    if (bytesRead < 4) {
+      return false;
+    }
+    return magics.has(header.toString("hex"));
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+function runCodesign(filePath, identity) {
+  execFileSync("codesign", ["-f", "-s", identity, filePath], {
+    stdio: "inherit",
+  });
 }
 
 function ensureFileExists(filePath) {
@@ -93,7 +145,7 @@ function resolveTargetPath(opts) {
   throw new Error("No target file found. Place `claude` in current folder or pass --file <path>.");
 }
 
-function patchCollapsedReadSearch(content) {
+function patchCollapsedReadSearch(content, ctx = {}) {
   let candidates = 0;
   let patched = 0;
 
@@ -106,7 +158,8 @@ function patchCollapsedReadSearch(content) {
     }
 
     candidates += 1;
-    const nextProps = props.replace(/verbose:[^,}]+/, "verbose:!0");
+    const replacement = ctx.preserveLength ? "verbose:1" : "verbose:!0";
+    const nextProps = props.replace(/verbose:[^,}]+/, replacement);
 
     if (nextProps !== props) {
       patched += 1;
@@ -287,7 +340,7 @@ function patchWordDiffLineBackgrounds(content) {
   };
 }
 
-function patchThinkingCase(content) {
+function patchThinkingCase(content, ctx = {}) {
   const caseNeedle = 'case"thinking":';
   let index = 0;
   let candidates = 0;
@@ -316,14 +369,31 @@ function patchThinkingCase(content) {
     let nextSegment = segment;
     nextSegment = nextSegment.replace(
       /if\(![A-Za-z_$][\w$]*(?:&&![A-Za-z_$][\w$]*){1,2}\)return null;/,
-      ""
+      (full) => {
+        if (!ctx.preserveLength) {
+          return "";
+        }
+        return `;${" ".repeat(Math.max(0, full.length - 1))}`;
+      }
     );
     nextSegment = nextSegment.replace(
       /createElement\(([A-Za-z_$][\w$]*),\{([^}]*)\}/g,
       (full, component, props) => {
         let nextProps = props;
-        nextProps = nextProps.replace(/isTranscriptMode:[^,}]+/g, "isTranscriptMode:!0");
-        nextProps = nextProps.replace(/hideInTranscript:[^,}]+/g, "hideInTranscript:!1");
+        nextProps = nextProps.replace(/isTranscriptMode:[^,}]+/g, (entry) => {
+          const desired = ctx.preserveLength ? "isTranscriptMode:1" : "isTranscriptMode:!0";
+          if (!ctx.preserveLength || desired.length > entry.length) {
+            return desired;
+          }
+          return `${desired}${" ".repeat(entry.length - desired.length)}`;
+        });
+        nextProps = nextProps.replace(/hideInTranscript:[^,}]+/g, (entry) => {
+          const desired = ctx.preserveLength ? "hideInTranscript:0" : "hideInTranscript:!1";
+          if (!ctx.preserveLength || desired.length > entry.length) {
+            return desired;
+          }
+          return `${desired}${" ".repeat(entry.length - desired.length)}`;
+        });
         if (nextProps === props) {
           return full;
         }
@@ -540,7 +610,7 @@ function patchThinkingStreaming(content) {
   };
 }
 
-function patchSubagentPromptVisibility(content) {
+function patchSubagentPromptVisibility(content, ctx = {}) {
   const backgroundedAnchor = '"Backgrounded agent"';
   let output = content;
   let candidates = 0;
@@ -596,7 +666,14 @@ function patchSubagentPromptVisibility(content) {
 
       localCandidates += 1;
       localPatched += 1;
-      return `${promptVar}&&`;
+      if (!ctx.preserveLength) {
+        return `${promptVar}&&`;
+      }
+      const replacement = `${promptVar}&&${promptVar}&&`;
+      if (replacement.length > full.length) {
+        return full;
+      }
+      return `${replacement}${" ".repeat(full.length - replacement.length)}`;
     });
 
     candidates += localCandidates;
@@ -618,7 +695,7 @@ function patchSubagentPromptVisibility(content) {
   };
 }
 
-function patchInstallerMigrationMessage(content) {
+function patchInstallerMigrationMessage(content, ctx = {}) {
   const needle = "switched from npm to native installer";
   let output = content;
   let candidates = 0;
@@ -651,8 +728,11 @@ function patchInstallerMigrationMessage(content) {
     }
 
     const currentPayload = output.slice(start + 1, end);
-    if (currentPayload !== "(patched)") {
-      output = `${output.slice(0, start + 1)}(patched)${output.slice(end)}`;
+    const desiredPayload = ctx.preserveLength
+      ? "(patched)".padEnd(currentPayload.length, " ")
+      : "(patched)";
+    if (currentPayload !== desiredPayload) {
+      output = `${output.slice(0, start + 1)}${desiredPayload}${output.slice(end)}`;
       patched += 1;
       idx = output.indexOf(needle, start + 11);
       continue;
@@ -779,6 +859,16 @@ function main() {
     process.exit(1);
   }
   const backupPath = `${targetPath}.display.backup`;
+  const isMachOTarget = looksLikeMachO(targetPath);
+  const preserveLength = isMachOTarget && !opts.allowSizeChange;
+
+  if (preserveLength) {
+    console.log("Detected Mach-O target: running in size-preserving mode.");
+    console.log("Size-changing modules will be skipped automatically.");
+  } else if (isMachOTarget && opts.allowSizeChange) {
+    console.log("Detected Mach-O target with --allow-size-change.");
+    console.log("Warning: size-changing patches usually produce a non-runnable binary.");
+  }
 
   if (opts.restore) {
     if (!fs.existsSync(backupPath)) {
@@ -788,16 +878,30 @@ function main() {
 
     if (opts.dryRun) {
       console.log(`Would restore ${targetPath} from ${backupPath}`);
+      if (opts.codesign) {
+        console.log(`Would run: codesign -f -s ${opts.codesignIdentity} ${targetPath}`);
+      }
       process.exit(0);
     }
 
     fs.copyFileSync(backupPath, targetPath);
     console.log(`Restored ${targetPath} from backup.`);
+
+    if (opts.codesign) {
+      try {
+        runCodesign(targetPath, opts.codesignIdentity);
+        console.log(`Codesigned: ${targetPath} (identity: ${opts.codesignIdentity})`);
+      } catch (error) {
+        console.error(`Error: codesign failed for ${targetPath}: ${error.message}`);
+        process.exit(1);
+      }
+    }
+
     process.exit(0);
   }
 
   ensureFileExists(targetPath);
-  const original = fs.readFileSync(targetPath, "utf8");
+  const original = fs.readFileSync(targetPath, TARGET_FILE_ENCODING);
   let currentContent = original;
   const patchResults = new Map();
 
@@ -807,16 +911,39 @@ function main() {
         candidates: 0,
         patched: 0,
         skipped: true,
+        reason: "disabled",
       });
       continue;
     }
 
-    const result = module.apply(currentContent);
+    if (isMachOTarget && module.id === "shebang") {
+      patchResults.set(module.id, {
+        candidates: 0,
+        patched: 0,
+        skipped: true,
+        reason: "not applicable for Mach-O",
+      });
+      continue;
+    }
+
+    const result = module.apply(currentContent, { preserveLength });
+    const hasSizeChange = result.content.length !== currentContent.length;
+    if (preserveLength && hasSizeChange) {
+      patchResults.set(module.id, {
+        candidates: result.candidates,
+        patched: 0,
+        skipped: true,
+        reason: "requires size change",
+      });
+      continue;
+    }
+
     currentContent = result.content;
     patchResults.set(module.id, {
       candidates: result.candidates,
       patched: result.patched,
       skipped: false,
+      reason: null,
     });
   }
 
@@ -826,7 +953,13 @@ function main() {
   for (const module of PATCH_MODULES) {
     const result = patchResults.get(module.id);
     if (result.skipped) {
-      console.log(`  ${module.id} candidates: 0, patched: 0 (skipped)`);
+      if (result.reason === "disabled") {
+        console.log(`  ${module.id} candidates: 0, patched: 0 (skipped)`);
+      } else {
+        console.log(
+          `  ${module.id} candidates: ${result.candidates}, patched: 0 (skipped: ${result.reason})`
+        );
+      }
       continue;
     }
     console.log(`  ${module.id} candidates: ${result.candidates}, patched: ${result.patched}`);
@@ -839,6 +972,9 @@ function main() {
 
   if (opts.dryRun) {
     console.log("Dry run complete. No files changed.");
+    if (opts.codesign) {
+      console.log(`Would run: codesign -f -s ${opts.codesignIdentity} ${targetPath}`);
+    }
     process.exit(0);
   }
 
@@ -847,8 +983,21 @@ function main() {
     console.log(`Backup created: ${backupPath}`);
   }
 
-  fs.writeFileSync(targetPath, nextContent, "utf8");
+  fs.writeFileSync(targetPath, nextContent, TARGET_FILE_ENCODING);
   console.log(`Patched: ${targetPath}`);
+
+  if (opts.codesign) {
+    try {
+      runCodesign(targetPath, opts.codesignIdentity);
+      console.log(`Codesigned: ${targetPath} (identity: ${opts.codesignIdentity})`);
+    } catch (error) {
+      console.error(`Error: codesign failed for ${targetPath}: ${error.message}`);
+      process.exit(1);
+    }
+  } else if (looksLikeMachO(targetPath)) {
+    console.log("Note: target appears to be a Mach-O binary.");
+    console.log(`Run: codesign -f -s - ${targetPath}`);
+  }
 }
 
 main();
