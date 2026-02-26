@@ -122,25 +122,6 @@ jobs:
           cp work/claude.original work/claude.no-inline-thinking.patched
           node patch-claude-display.js --file ./work/claude.no-inline-thinking.patched --disable thinking-inline
 
-      - name: Build npm-native binaries (Linux)
-        if: steps.check.outputs.skip != 'true'
-        run: |
-          set -euo pipefail
-
-          cp work/claude.patched work/claude.patched.native-runtime
-          node patch-claude-display.js --file ./work/claude.patched.native-runtime --enable native-runtime,ripgrep-bun-runtime
-          tail -n +2 work/claude.patched.native-runtime > work/claude.patched.compile.js
-          bun build --compile work/claude.patched.compile.js --outfile work/claude.npm-native.patched
-          chmod +x work/claude.npm-native.patched
-          ./work/claude.npm-native.patched --version
-
-          cp work/claude.no-inline-thinking.patched work/claude.no-inline-thinking.native-runtime
-          node patch-claude-display.js --file ./work/claude.no-inline-thinking.native-runtime --enable native-runtime,ripgrep-bun-runtime
-          tail -n +2 work/claude.no-inline-thinking.native-runtime > work/claude.no-inline-thinking.compile.js
-          bun build --compile work/claude.no-inline-thinking.compile.js --outfile work/claude.npm-native.no-thinking.patched
-          chmod +x work/claude.npm-native.no-thinking.patched
-          ./work/claude.npm-native.no-thinking.patched --version
-
       - name: Download native binary (Linux)
         if: steps.check.outputs.skip != 'true'
         id: native
@@ -177,6 +158,34 @@ jobs:
 
           cp "$NATIVE_BIN" work/claude.native.original
           chmod +x work/claude.native.original
+
+      - name: Extract color-diff addon (Linux)
+        if: steps.check.outputs.skip != 'true'
+        run: |
+          set -euo pipefail
+
+          node scripts/extract-color-diff-node.js --input work/claude.native.original --output work/color-diff.linux.node
+
+      - name: Build npm-native binaries (Linux)
+        if: steps.check.outputs.skip != 'true'
+        run: |
+          set -euo pipefail
+
+          cp work/claude.patched work/claude.patched.native-runtime
+          node patch-claude-display.js --file ./work/claude.patched.native-runtime --enable native-runtime,ripgrep-bun-runtime,native-color-diff-addon
+          tail -n +2 work/claude.patched.native-runtime > work/claude.patched.compile.js
+          bun build --compile work/claude.patched.compile.js --outfile work/claude.npm-native.patched
+          chmod +x work/claude.npm-native.patched
+          cp work/color-diff.linux.node work/claude.npm-native.patched.color-diff.node
+          ./work/claude.npm-native.patched --version
+
+          cp work/claude.no-inline-thinking.patched work/claude.no-inline-thinking.native-runtime
+          node patch-claude-display.js --file ./work/claude.no-inline-thinking.native-runtime --enable native-runtime,ripgrep-bun-runtime,native-color-diff-addon
+          tail -n +2 work/claude.no-inline-thinking.native-runtime > work/claude.no-inline-thinking.compile.js
+          bun build --compile work/claude.no-inline-thinking.compile.js --outfile work/claude.npm-native.no-thinking.patched
+          chmod +x work/claude.npm-native.no-thinking.patched
+          cp work/color-diff.linux.node work/claude.npm-native.no-thinking.patched.color-diff.node
+          ./work/claude.npm-native.no-thinking.patched --version
 
       - name: Apply display patches (native Linux)
         if: steps.check.outputs.skip != 'true'
@@ -225,6 +234,8 @@ jobs:
             work/claude.no-inline-thinking.patched \
             work/claude.npm-native.patched \
             work/claude.npm-native.no-thinking.patched \
+            work/claude.npm-native.patched.color-diff.node \
+            work/claude.npm-native.no-thinking.patched.color-diff.node \
             work/claude.native.original \
             work/claude.native.patched \
             work/claude.native.no-inline-thinking.patched
@@ -264,24 +275,6 @@ jobs:
             --dir work \
             --clobber
 
-      - name: Build npm-native binaries (macOS)
-        run: |
-          set -euo pipefail
-
-          cp work/claude.patched work/claude.patched.native-runtime
-          node patch-claude-display.js --file ./work/claude.patched.native-runtime --enable native-runtime,ripgrep-bun-runtime
-          tail -n +2 work/claude.patched.native-runtime > work/claude.patched.compile.js
-          bun build --compile --target bun-darwin-arm64 work/claude.patched.compile.js --outfile work/claude.npm-native.macos.patched
-          codesign -f -s - ./work/claude.npm-native.macos.patched
-          ./work/claude.npm-native.macos.patched --version
-
-          cp work/claude.no-inline-thinking.patched work/claude.no-inline-thinking.native-runtime
-          node patch-claude-display.js --file ./work/claude.no-inline-thinking.native-runtime --enable native-runtime,ripgrep-bun-runtime
-          tail -n +2 work/claude.no-inline-thinking.native-runtime > work/claude.no-inline-thinking.compile.js
-          bun build --compile --target bun-darwin-arm64 work/claude.no-inline-thinking.compile.js --outfile work/claude.npm-native.macos.no-thinking.patched
-          codesign -f -s - ./work/claude.npm-native.macos.no-thinking.patched
-          ./work/claude.npm-native.macos.no-thinking.patched --version
-
       - name: Download native binary (macOS)
         id: native_macos
         run: |
@@ -318,6 +311,32 @@ jobs:
           cp "$NATIVE_BIN" work/claude.native.macos.original
           chmod +x work/claude.native.macos.original
 
+      - name: Extract color-diff addon (macOS)
+        run: |
+          set -euo pipefail
+
+          node scripts/extract-color-diff-node.js --input work/claude.native.macos.original --output work/color-diff.macos.node
+
+      - name: Build npm-native binaries (macOS)
+        run: |
+          set -euo pipefail
+
+          cp work/claude.patched work/claude.patched.native-runtime
+          node patch-claude-display.js --file ./work/claude.patched.native-runtime --enable native-runtime,ripgrep-bun-runtime,native-color-diff-addon
+          tail -n +2 work/claude.patched.native-runtime > work/claude.patched.compile.js
+          bun build --compile --target bun-darwin-arm64 work/claude.patched.compile.js --outfile work/claude.npm-native.macos.patched
+          codesign -f -s - ./work/claude.npm-native.macos.patched
+          cp work/color-diff.macos.node work/claude.npm-native.macos.patched.color-diff.node
+          ./work/claude.npm-native.macos.patched --version
+
+          cp work/claude.no-inline-thinking.patched work/claude.no-inline-thinking.native-runtime
+          node patch-claude-display.js --file ./work/claude.no-inline-thinking.native-runtime --enable native-runtime,ripgrep-bun-runtime,native-color-diff-addon
+          tail -n +2 work/claude.no-inline-thinking.native-runtime > work/claude.no-inline-thinking.compile.js
+          bun build --compile --target bun-darwin-arm64 work/claude.no-inline-thinking.compile.js --outfile work/claude.npm-native.macos.no-thinking.patched
+          codesign -f -s - ./work/claude.npm-native.macos.no-thinking.patched
+          cp work/color-diff.macos.node work/claude.npm-native.macos.no-thinking.patched.color-diff.node
+          ./work/claude.npm-native.macos.no-thinking.patched --version
+
       - name: Apply display patches (native macOS)
         run: |
           set -euo pipefail
@@ -345,4 +364,6 @@ jobs:
             work/claude.native.macos.no-inline-thinking.patched \
             work/claude.npm-native.macos.patched \
             work/claude.npm-native.macos.no-thinking.patched \
+            work/claude.npm-native.macos.patched.color-diff.node \
+            work/claude.npm-native.macos.no-thinking.patched.color-diff.node \
             --clobber

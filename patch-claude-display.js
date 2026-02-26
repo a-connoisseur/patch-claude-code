@@ -821,6 +821,31 @@ function patchRipgrepForBunRuntime(content) {
   };
 }
 
+function patchNativeColorDiffAddon(content) {
+  const pattern =
+    /\(\(\)=>\{throw new Error\([^)]*color-diff\.node[^)]*\);\}\)\(\)/g;
+  let candidates = 0;
+  let patched = 0;
+
+  const replacement =
+    `(()=>{let __cc_require=typeof require=="function"?require:typeof b6=="function"?b6:null;if(!__cc_require)throw new Error("Cannot require module ../../color-diff.node");let __cc_execDir=process.execPath.replace(/[\\\\/][^\\\\/]*$/,""),__cc_paths=[process.env.CLAUDE_CODE_COLOR_DIFF_NODE_PATH,process.execPath+".color-diff.node",(__cc_execDir?__cc_execDir+"/":"")+"color-diff.node","./color-diff.node"];for(let __cc_path of __cc_paths){if(!__cc_path)continue;try{return __cc_require(__cc_path)}catch{}}throw new Error("Cannot require module ../../color-diff.node")})()`;
+
+  const output = content.replace(pattern, (full) => {
+    candidates += 1;
+    if (full === replacement) {
+      return full;
+    }
+    patched += 1;
+    return replacement;
+  });
+
+  return {
+    content: output,
+    candidates,
+    patched,
+  };
+}
+
 function patchTargetShebang(content) {
   const shebangPattern = /^#!\/usr\/bin\/env node([^\n]*)/;
   const hasNodeShebang = shebangPattern.test(content);
@@ -878,6 +903,12 @@ const PATCH_MODULES = [
     id: "ripgrep-bun-runtime",
     description: "Use system rg for Bun runtime ripgrep entrypoint",
     apply: patchRipgrepForBunRuntime,
+    defaultEnabled: false,
+  },
+  {
+    id: "native-color-diff-addon",
+    description: "Load color-diff.node sidecar in npm-native builds",
+    apply: patchNativeColorDiffAddon,
     defaultEnabled: false,
   },
   {

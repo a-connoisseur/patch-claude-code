@@ -45,6 +45,7 @@ codesign -f -s - ./claude
 - `subagent-prompt`: show backgrounded agent `Prompt:` outside transcript mode
 - `installer-label`: replace migration warning text with `(patched)`
 - `ripgrep-bun-runtime` (opt-in): use system `rg` for Bun runtime ripgrep entrypoint
+- `native-color-diff-addon` (opt-in): load `color-diff.node` sidecar in npm-native builds
 - `native-runtime` (opt-in): force Bun-built binaries onto native runtime code paths
 
 ## Target-Specific Behavior
@@ -54,7 +55,7 @@ codesign -f -s - ./claude
 Default modules apply. Opt-in modules are skipped unless explicitly enabled:
 
 ```bash
-node patch-claude-display.js --file ./claude.patched --enable native-runtime,ripgrep-bun-runtime
+node patch-claude-display.js --file ./claude.patched --enable native-runtime,ripgrep-bun-runtime,native-color-diff-addon
 ```
 
 ### Native binary target
@@ -101,8 +102,14 @@ Current pipeline:
 
 1. Pull npm package and patch `cli.js` (full + no-inline variant).
 2. Pull native Linux build via `https://claude.ai/install.sh` and patch binary (full + no-inline variant).
-3. Pull native macOS build on `macos-latest`, patch binary, and ad-hoc sign outputs.
+3. Pull native macOS build on `macos-26`, patch binary, and ad-hoc sign outputs.
 4. Publish release with originals + patched outputs + metadata.
+
+For npm-native artifacts, CI now also:
+
+1. extracts `color-diff.node` from the downloaded native binary
+2. applies `native-color-diff-addon` while patching compile input JS
+3. uploads `<binary>.color-diff.node` sidecar files with each npm-native binary
 
 ## Troubleshooting
 
