@@ -13,6 +13,8 @@ This repo publishes patched native Claude binaries that make output more transpa
 
 ### Prerequisite
 
+> NOTE: You MUST have [ripgrep](https://github.com/BurntSushi/ripgrep) installed on your system first!
+
 If you installed Claude Code via npm, remove it and install the native build first:
 
 ```bash
