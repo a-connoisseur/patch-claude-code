@@ -52,8 +52,3 @@ sudo mv ./claude.native.macos.patched "$(which claude)"
 xattr -dr com.apple.quarantine "$(which claude)"
 claude --version
 ```
-
-## Notes
-
-- No `.color-diff.node` sidecar install step is required in this native-only flow.
-- If you prefer no inline thinking, use the matching `no-inline-thinking` binary.
