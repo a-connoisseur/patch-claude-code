@@ -23,13 +23,18 @@ curl -fsSL https://claude.ai/install.sh | bash
 claude --version
 ```
 
-1. Pick one binary and its matching `.color-diff.node` file:
+1. Pick the release tag for your platform:
+   - Linux x64: `v<version>-linux-x64`
+   - Linux arm64: `v<version>-linux-arm64`
+   - macOS arm64: `v<version>-macos-arm64`
+
+2. In that release, pick one binary and its matching `.color-diff.node` file:
    - Linux regular: `claude.npm-native.patched` + `claude.npm-native.patched.color-diff.node`
    - Linux no-thinking: `claude.npm-native.no-thinking.patched` + `claude.npm-native.no-thinking.patched.color-diff.node`
    - macOS regular: `claude.npm-native.macos.patched` + `claude.npm-native.macos.patched.color-diff.node`
    - macOS no-thinking: `claude.npm-native.macos.no-thinking.patched` + `claude.npm-native.macos.no-thinking.patched.color-diff.node`
-  
-2. Follow the install instructions for your platform below.
+
+3. Follow the install instructions for your platform below.
 
 ### Install (Linux)
 
