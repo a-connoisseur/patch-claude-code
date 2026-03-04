@@ -185,8 +185,7 @@ jobs:
 
           gh release create "$TAG" \
             --title "$TITLE" \
-            --notes "Patched native Claude ${{ matrix.platform_label }} build \
-via tweakcc API (version: ${{ steps.tweakcc.outputs.version }}), source version \`${VERSION}\`" \
+            --notes "Patched native Claude ${{ matrix.platform_label }} build via tweakcc API (version: ${{ steps.tweakcc.outputs.version }}), source version \`${VERSION}\`" \
             work/metadata.txt \
             "work/${OUT_BASE}.patched" \
             "work/${OUT_BASE}.no-inline-thinking.patched"
