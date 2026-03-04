@@ -602,8 +602,9 @@ function patchThinkingStreaming(content) {
           const thinkingStartBefore = `case"thinking":case"redacted_thinking":${setModeParam}("thinking");return;`;
           const thinkingStartAfter = `case"thinking":case"redacted_thinking":${setStreamingThinkingParam}?.(()=>({thinking:"",isStreaming:!0,streamingEndedAt:void 0})),${setModeParam}("thinking");return;`;
 
+          const thinkingStateParam = "__cc_prevStreamingThinking";
           const thinkingDeltaBefore = `case"thinking_delta":${appendOutputParam}(${eventParam}.event.delta.thinking);return;`;
-          const thinkingDeltaAfter = `case"thinking_delta":${appendOutputParam}(${eventParam}.event.delta.thinking),${setStreamingThinkingParam}?.((H)=>({thinking:(H?.thinking??"")+${eventParam}.event.delta.thinking,isStreaming:!0,streamingEndedAt:void 0}));return;`;
+          const thinkingDeltaAfter = `case"thinking_delta":${appendOutputParam}(${eventParam}.event.delta.thinking),${setStreamingThinkingParam}?.((${thinkingStateParam})=>({thinking:(${thinkingStateParam}?.thinking??"")+${eventParam}.event.delta.thinking,isStreaming:!0,streamingEndedAt:void 0}));return;`;
 
           const wg6Replacements = [
             [requestStartBefore, requestStartAfter],
