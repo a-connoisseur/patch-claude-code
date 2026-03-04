@@ -2,18 +2,18 @@
 
 ## What this does
 
-This repo publishes patched native Claude binaries that make output more transparent _without_ verbose mode:
+This repo publishes patched native Claude binaries that make output more transparent without verbose mode:
 
 - Shows detailed tool calls instead of collapsed summaries.
-- Shows thinking inline and streams it real time (unless you choose a `no-inline-thinking` asset).
+- Shows thinking inline and streams it in real time (unless you choose a `no-inline-thinking` asset).
 - Shows subagent `Prompt:` blocks by default.
-- Preserves syntax highlighting unlike the npm builds.
+- Preserves syntax highlighting.
 
-## Quick Start (From Releases, npm-native only)
+Releases are now built from native installer binaries and repacked with the [`tweakcc` API](https://www.npmjs.com/package/tweakcc#api).
+
+## Quick Start (From Releases, native only)
 
 ### Prerequisite
-
-> NOTE: You MUST have [ripgrep](https://github.com/BurntSushi/ripgrep) installed on your system first!
 
 If you installed Claude Code via npm, remove it and install the native build first:
 
@@ -28,35 +28,32 @@ claude --version
    - Linux arm64: `v<version>-linux-arm64`
    - macOS arm64: `v<version>-macos-arm64`
 
-2. In that release, pick one binary and its matching `.color-diff.node` file:
-   - Linux regular: `claude.npm-native.patched` + `claude.npm-native.patched.color-diff.node`
-   - Linux no-thinking: `claude.npm-native.no-thinking.patched` + `claude.npm-native.no-thinking.patched.color-diff.node`
-   - macOS regular: `claude.npm-native.macos.patched` + `claude.npm-native.macos.patched.color-diff.node`
-   - macOS no-thinking: `claude.npm-native.macos.no-thinking.patched` + `claude.npm-native.macos.no-thinking.patched.color-diff.node`
+2. In that release, pick one binary:
+   - Linux regular: `claude.native.patched`
+   - Linux no-inline-thinking: `claude.native.no-inline-thinking.patched`
+   - macOS regular: `claude.native.macos.patched`
+   - macOS no-inline-thinking: `claude.native.macos.no-inline-thinking.patched`
 
 3. Follow the install instructions for your platform below.
 
 ### Install (Linux)
 
 ```bash
-chmod +x ./claude.npm-native.patched
-sudo mv ./claude.npm-native.patched "$(which claude)"
-sudo mv ./claude.npm-native.patched.color-diff.node "$(which claude).color-diff.node"
+chmod +x ./claude.native.patched
+sudo mv ./claude.native.patched "$(which claude)"
 claude --version
 ```
 
 ### Install (macOS)
 
 ```bash
-chmod +x ./claude.npm-native.macos.patched
-sudo mv ./claude.npm-native.macos.patched "$(which claude)"
-sudo mv ./claude.npm-native.macos.patched.color-diff.node "$(which claude).color-diff.node"
+chmod +x ./claude.native.macos.patched
+sudo mv ./claude.native.macos.patched "$(which claude)"
 xattr -dr com.apple.quarantine "$(which claude)"
-xattr -dr com.apple.quarantine "$(which claude).color-diff.node"
 claude --version
 ```
 
 ## Notes
 
-- Keep the sidecar filename exactly as `$(which claude).color-diff.node`.
-- If you prefer no inline thinking, use the matching `no-thinking` binary and sidecar pair.
+- No `.color-diff.node` sidecar install step is required in this native-only flow.
+- If you prefer no inline thinking, use the matching `no-inline-thinking` binary.

@@ -1,40 +1,40 @@
 # Claude Display Patch Playbook
 
-This playbook covers patching both Claude Code packaging styles:
-
-1. npm JS bundle (`cli.js`)
-2. native executable (`claude` binary)
+This playbook covers patching native Claude binaries and repacking them with the `tweakcc` API.
 
 ## Fast Path
 
-Patch target in place:
+Patch a native binary in place (recommended):
 
 ```bash
-node patch-claude-display.js --file ./claude
+node scripts/patch-native-with-tweakcc.js --input ./claude
+```
+
+Create release variants:
+
+```bash
+node scripts/patch-native-with-tweakcc.js --input ./claude --output ./claude.native.patched
+node scripts/patch-native-with-tweakcc.js --input ./claude --output ./claude.native.no-inline-thinking.patched --disable thinking-inline
 ```
 
 Useful modes:
 
 ```bash
-node patch-claude-display.js --file ./claude --dry-run
-node patch-claude-display.js --file ./claude --restore
 node patch-claude-display.js --list-patches
-node patch-claude-display.js --file ./claude --disable thinking-inline
+node patch-claude-display.js --file ./content.js --dry-run
+node patch-claude-display.js --file ./content.js --disable thinking-inline
 ```
 
 macOS native binary signing:
 
 ```bash
-node patch-claude-display.js --file ./claude --codesign
-```
-
-or manually:
-
-```bash
-codesign -f -s - ./claude
+codesign -f -s - ./claude.native.macos.patched
+codesign -f -s - ./claude.native.macos.no-inline-thinking.patched
 ```
 
 ## Patch Modules
+
+Default modules:
 
 - `shebang`: `#!/usr/bin/env node` -> `#!/usr/bin/env bun`
 - `tool-call-verbose`: force verbose collapsed read/search output
@@ -44,54 +44,42 @@ codesign -f -s - ./claude
 - `thinking-streaming`: make streamed thinking update live
 - `subagent-prompt`: show backgrounded agent `Prompt:` outside transcript mode
 - `installer-label`: replace migration warning text with `(patched)`
-- `ripgrep-bun-runtime` (opt-in): use system `rg` for Bun runtime ripgrep entrypoint
-- `native-color-diff-addon` (opt-in): load `color-diff.node` sidecar in npm-native builds
-- `native-runtime` (opt-in): force Bun-built binaries onto native runtime code paths
+
+Opt-in modules (kept for compatibility with legacy JS/Bun workflows):
+
+- `ripgrep-bun-runtime`: use system `rg` for Bun runtime ripgrep entrypoint
+- `native-color-diff-addon`: load `color-diff.node` sidecar in npm-native builds
+- `native-runtime`: force Bun-built binaries onto native runtime code paths
 
 ## Target-Specific Behavior
 
-### npm JS target
+### Native binary via tweakcc (recommended)
 
-Default modules apply. Opt-in modules are skipped unless explicitly enabled:
+When using `scripts/patch-native-with-tweakcc.js`, the script:
 
-```bash
-node patch-claude-display.js --file ./claude.patched --enable native-runtime,ripgrep-bun-runtime,native-color-diff-addon
-```
+1. reads embedded JS content from the native binary (`readContent`)
+2. applies patch modules using `patch-claude-display.js`
+3. writes patched JS back into the native binary (`writeContent`)
 
-### Native binary target
+Because this patches extracted JS content (not raw binary bytes), size-changing edits are safe in this flow.
 
-The patcher auto-enables size-preserving mode:
+### Direct binary patch with `patch-claude-display.js` (legacy/manual)
 
-- Applies:
-  - `tool-call-verbose`
-  - `thinking-inline`
-  - `subagent-prompt`
-  - `installer-label`
-- Skips:
-  - `shebang` (not applicable)
-  - size-changing modules (`create-diff-colors`, `word-diff-line-bg`, `thinking-streaming`, `ripgrep-bun-runtime`, `native-runtime`)
-
-Reason: size-changing edits usually produce a non-runnable native binary even after re-signing.
+If you run `patch-claude-display.js` directly on a native executable, it auto-enables size-preserving mode and skips size-changing modules unless `--allow-size-change` is passed.
 
 ## Validation
 
-List module outcomes:
+Quick checks:
 
 ```bash
-node patch-claude-display.js --file ./claude --dry-run
-```
-
-Quick target checks:
-
-```bash
-file ./claude
-./claude --version
+file ./claude.native.patched
+./claude.native.patched --version
 ```
 
 For patched macOS binaries:
 
 ```bash
-codesign --verify --verbose=2 ./claude
+codesign --verify --verbose=2 ./claude.native.macos.patched
 ```
 
 ## CI/CD
@@ -101,30 +89,27 @@ Workflow: `.github/workflows/patch-claude-from-npm.yml`
 Current pipeline:
 
 1. Run a platform matrix for `linux-x64`, `linux-arm64`, and `macos-arm64`.
-2. In each platform job, pull npm package and patch `cli.js` (full + no-inline variant).
-3. In each platform job, pull the platform-native installer build via `https://claude.ai/install.sh` and patch native binary (full + no-inline variant).
-4. Build npm-native binaries for that platform target and publish a platform-specific release tag:
-   - `v<package_version>-linux-x64`
-   - `v<package_version>-linux-arm64`
-   - `v<package_version>-macos-arm64`
-
-For npm-native artifacts, CI now also:
-
-1. extracts `color-diff.node` from the downloaded native binary
-2. applies `native-color-diff-addon` while patching compile input JS
-3. uploads `<binary>.color-diff.node` sidecar files with each npm-native binary
+2. Download the platform-native installer build via `https://claude.ai/install.sh`.
+3. Install `tweakcc` and patch native binaries via `scripts/patch-native-with-tweakcc.js`.
+4. Build and publish two native artifacts per platform release:
+   - `<native_basename>.patched`
+   - `<native_basename>.no-inline-thinking.patched`
+5. Publish platform tags:
+   - `v<native_version>-linux-x64`
+   - `v<native_version>-linux-arm64`
+   - `v<native_version>-macos-arm64`
 
 ## Troubleshooting
 
 If a module stops matching after upstream updates:
 
 1. Run dry-run and inspect candidate/patch counts.
-2. Locate nearby anchors in the target with `rg -a`.
+2. Locate nearby anchors in extracted content (`rg -n` or `grep -n`).
 3. Update matcher logic in `patch-claude-display.js`.
 4. Re-run dry-run before applying.
 
 ## Reuse Prompt
 
 ```text
-Patch the current Claude target using PATCHING_PLAYBOOK.md, run verification, and report which modules were applied or skipped.
+Patch the current native Claude target with scripts/patch-native-with-tweakcc.js, run verification, and report which modules were applied or skipped.
 ```
