@@ -1,14 +1,10 @@
-name: Patch Claude From npm + native
+name: Patch Claude Native (tweakcc)
 
 on:
   schedule:
     - cron: "0 */6 * * *"
   workflow_dispatch:
     inputs:
-      package_version:
-        description: "Optional @anthropic-ai/claude-code version (for example: 2.1.45). Leave empty for latest."
-        required: false
-        default: ""
       native_version:
         description: "Optional native installer version (for example: 2.1.59). Leave empty for latest."
         required: false
@@ -31,23 +27,17 @@ jobs:
         include:
           - platform_label: linux-x64
             runs_on: ubuntu-latest
-            bun_target: bun-linux-x64
             release_suffix: linux-x64
-            npm_native_basename: claude.npm-native
             native_basename: claude.native
             needs_codesign: false
           - platform_label: linux-arm64
             runs_on: ubuntu-24.04-arm
-            bun_target: bun-linux-arm64
             release_suffix: linux-arm64
-            npm_native_basename: claude.npm-native
             native_basename: claude.native
             needs_codesign: false
           - platform_label: macos-arm64
             runs_on: macos-26
-            bun_target: bun-darwin-arm64
             release_suffix: macos-arm64
-            npm_native_basename: claude.npm-native.macos
             native_basename: claude.native.macos
             needs_codesign: true
 
@@ -60,93 +50,15 @@ jobs:
         with:
           node-version: "20"
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: "1.3.9"
-
-      - name: Resolve package spec
-        id: spec
-        run: |
-          if [ -n "${{ github.event.inputs.package_version }}" ]; then
-            echo "value=@anthropic-ai/claude-code@${{ github.event.inputs.package_version }}" >> "$GITHUB_OUTPUT"
-          else
-            echo "value=@anthropic-ai/claude-code" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Download and extract npm package
-        id: extract
+      - name: Install tweakcc
+        id: tweakcc
         run: |
           set -euo pipefail
-
-          mkdir -p work/package-extract
-          TARBALL="$(npm pack "${{ steps.spec.outputs.value }}" | tail -n1)"
-          tar -xzf "$TARBALL" -C work/package-extract
-          rm -f "$TARBALL"
-
-          VERSION="$(jq -r .version work/package-extract/package/package.json)"
+          npm install --no-save tweakcc
+          VERSION="$(node -e "console.log(require('./node_modules/tweakcc/package.json').version)")"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
-          CLI_PATH="$(find work/package-extract/package -type f -name 'cli.js' | head -n1)"
-          if [ -z "$CLI_PATH" ]; then
-            echo "Could not find cli.js in package contents."
-            find work/package-extract/package -maxdepth 4 -type f | head -n 200
-            exit 1
-          fi
-
-          cp "$CLI_PATH" work/claude.original
-          cp "$CLI_PATH" claude
-
-          echo "cli_path=$CLI_PATH" >> "$GITHUB_OUTPUT"
-
-      - name: Check if platform release already exists
-        id: check
-        env:
-          GH_TOKEN: ${{ github.token }}
-          FORCE_RELEASE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.force || 'false' }}
-        run: |
-          set -euo pipefail
-
-          VERSION="${{ steps.extract.outputs.version }}"
-          BASE_TAG="v${VERSION}-${{ matrix.release_suffix }}"
-          TAG="$BASE_TAG"
-          TITLE="claude-code ${VERSION} (${{ matrix.release_suffix }})"
-
-          if gh release view "$BASE_TAG" > /dev/null 2>&1; then
-            if [ "${FORCE_RELEASE}" = "true" ]; then
-              SUFFIX=2
-              TAG="${BASE_TAG}-${SUFFIX}"
-              while gh release view "$TAG" > /dev/null 2>&1; do
-                SUFFIX=$((SUFFIX + 1))
-                TAG="${BASE_TAG}-${SUFFIX}"
-              done
-
-              echo "Release ${BASE_TAG} exists; forcing with tag ${TAG}."
-              echo "skip=false" >> "$GITHUB_OUTPUT"
-              echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-              echo "title=$TITLE (${TAG})" >> "$GITHUB_OUTPUT"
-            else
-              echo "Release ${BASE_TAG} already exists, skipping."
-              echo "skip=true" >> "$GITHUB_OUTPUT"
-            fi
-          else
-            echo "skip=false" >> "$GITHUB_OUTPUT"
-            echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-            echo "title=$TITLE" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Apply display patches
-        if: steps.check.outputs.skip != 'true'
-        run: |
-          set -euo pipefail
-          cp work/claude.original work/claude.patched
-          node patch-claude-display.js --file ./work/claude.patched
-
-          cp work/claude.original work/claude.no-inline-thinking.patched
-          node patch-claude-display.js --file ./work/claude.no-inline-thinking.patched --disable thinking-inline
-
       - name: Download native binary
-        if: steps.check.outputs.skip != 'true'
         id: native
         run: |
           set -euo pipefail
@@ -175,51 +87,50 @@ jobs:
             exit 1
           fi
 
-          NATIVE_VERSION="$("$NATIVE_BIN" --version | head -n1 | awk '{print $1}')"
+          VERSION="$($NATIVE_BIN --version | head -n1 | awk '{print $1}')"
           echo "path=$NATIVE_BIN" >> "$GITHUB_OUTPUT"
-          echo "version=$NATIVE_VERSION" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
           cp "$NATIVE_BIN" work/claude.native.original
           chmod +x work/claude.native.original
 
-      - name: Extract color-diff addon
-        if: steps.check.outputs.skip != 'true'
-        run: |
-          set -euo pipefail
-          node scripts/extract-color-diff-node.js --input work/claude.native.original --output work/color-diff.node
-
-      - name: Build npm-native binaries
-        if: steps.check.outputs.skip != 'true'
+      - name: Check if platform release already exists
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FORCE_RELEASE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.force || 'false' }}
         run: |
           set -euo pipefail
 
-          OUT_BASE="${{ matrix.npm_native_basename }}"
-          TARGET="${{ matrix.bun_target }}"
-          NEEDS_CODESIGN="${{ matrix.needs_codesign }}"
+          VERSION="${{ steps.native.outputs.version }}"
+          BASE_TAG="v${VERSION}-${{ matrix.release_suffix }}"
+          TAG="$BASE_TAG"
+          TITLE="claude-code native ${VERSION} (${{ matrix.release_suffix }})"
 
-          cp work/claude.patched work/claude.patched.native-runtime
-          node patch-claude-display.js --file ./work/claude.patched.native-runtime --enable native-runtime,ripgrep-bun-runtime,native-color-diff-addon
-          tail -n +2 work/claude.patched.native-runtime > work/claude.patched.compile.js
-          bun build --compile --target "$TARGET" work/claude.patched.compile.js --outfile "work/${OUT_BASE}.patched"
-          chmod +x "work/${OUT_BASE}.patched"
-          if [ "$NEEDS_CODESIGN" = "true" ]; then
-            codesign -f -s - "./work/${OUT_BASE}.patched"
+          if gh release view "$BASE_TAG" > /dev/null 2>&1; then
+            if [ "$FORCE_RELEASE" = "true" ]; then
+              SUFFIX=2
+              TAG="${BASE_TAG}-${SUFFIX}"
+              while gh release view "$TAG" > /dev/null 2>&1; do
+                SUFFIX=$((SUFFIX + 1))
+                TAG="${BASE_TAG}-${SUFFIX}"
+              done
+
+              echo "Release ${BASE_TAG} exists; forcing with tag ${TAG}."
+              echo "skip=false" >> "$GITHUB_OUTPUT"
+              echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+              echo "title=$TITLE (${TAG})" >> "$GITHUB_OUTPUT"
+            else
+              echo "Release ${BASE_TAG} already exists, skipping."
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+            echo "title=$TITLE" >> "$GITHUB_OUTPUT"
           fi
-          cp work/color-diff.node "work/${OUT_BASE}.patched.color-diff.node"
-          "./work/${OUT_BASE}.patched" --version
 
-          cp work/claude.no-inline-thinking.patched work/claude.no-inline-thinking.native-runtime
-          node patch-claude-display.js --file ./work/claude.no-inline-thinking.native-runtime --enable native-runtime,ripgrep-bun-runtime,native-color-diff-addon
-          tail -n +2 work/claude.no-inline-thinking.native-runtime > work/claude.no-inline-thinking.compile.js
-          bun build --compile --target "$TARGET" work/claude.no-inline-thinking.compile.js --outfile "work/${OUT_BASE}.no-thinking.patched"
-          chmod +x "work/${OUT_BASE}.no-thinking.patched"
-          if [ "$NEEDS_CODESIGN" = "true" ]; then
-            codesign -f -s - "./work/${OUT_BASE}.no-thinking.patched"
-          fi
-          cp work/color-diff.node "work/${OUT_BASE}.no-thinking.patched.color-diff.node"
-          "./work/${OUT_BASE}.no-thinking.patched" --version
-
-      - name: Apply display patches (native)
+      - name: Apply display patches to native binaries (tweakcc)
         if: steps.check.outputs.skip != 'true'
         run: |
           set -euo pipefail
@@ -227,18 +138,23 @@ jobs:
           OUT_BASE="${{ matrix.native_basename }}"
           NEEDS_CODESIGN="${{ matrix.needs_codesign }}"
 
-          cp work/claude.native.original "work/${OUT_BASE}.patched"
-          node patch-claude-display.js --file "./work/${OUT_BASE}.patched"
+          node scripts/patch-native-with-tweakcc.js \
+            --input work/claude.native.original \
+            --output "work/${OUT_BASE}.patched"
+          chmod +x "work/${OUT_BASE}.patched"
+
+          node scripts/patch-native-with-tweakcc.js \
+            --input work/claude.native.original \
+            --output "work/${OUT_BASE}.no-inline-thinking.patched" \
+            --disable thinking-inline
+          chmod +x "work/${OUT_BASE}.no-inline-thinking.patched"
+
           if [ "$NEEDS_CODESIGN" = "true" ]; then
             codesign -f -s - "./work/${OUT_BASE}.patched"
-          fi
-          "./work/${OUT_BASE}.patched" --version
-
-          cp work/claude.native.original "work/${OUT_BASE}.no-inline-thinking.patched"
-          node patch-claude-display.js --file "./work/${OUT_BASE}.no-inline-thinking.patched" --disable thinking-inline
-          if [ "$NEEDS_CODESIGN" = "true" ]; then
             codesign -f -s - "./work/${OUT_BASE}.no-inline-thinking.patched"
           fi
+
+          "./work/${OUT_BASE}.patched" --version
           "./work/${OUT_BASE}.no-inline-thinking.patched" --version
 
       - name: Write metadata
@@ -247,12 +163,10 @@ jobs:
           set -euo pipefail
           {
             echo "platform=${{ matrix.release_suffix }}"
-            echo "bun_target=${{ matrix.bun_target }}"
-            echo "package_spec=${{ steps.spec.outputs.value }}"
-            echo "source_cli_path=${{ steps.extract.outputs.cli_path }}"
             echo "native_install_script=https://claude.ai/install.sh"
             echo "native_version=${{ steps.native.outputs.version }}"
             echo "native_binary_path=${{ steps.native.outputs.path }}"
+            echo "tweakcc_version=${{ steps.tweakcc.outputs.version }}"
             echo "run_id=${{ github.run_id }}"
             echo "run_attempt=${{ github.run_attempt }}"
           } > work/metadata.txt
@@ -264,17 +178,15 @@ jobs:
         run: |
           set -euo pipefail
 
-          VERSION="${{ steps.extract.outputs.version }}"
-          NATIVE_VERSION="${{ steps.native.outputs.version }}"
+          VERSION="${{ steps.native.outputs.version }}"
           TAG="${{ steps.check.outputs.tag }}"
           TITLE="${{ steps.check.outputs.title }}"
-          OUT_BASE="${{ matrix.npm_native_basename }}"
+          OUT_BASE="${{ matrix.native_basename }}"
 
           gh release create "$TAG" \
             --title "$TITLE" \
-            --notes "Patched from \`@anthropic-ai/claude-code@${VERSION}\` and native ${{ matrix.platform_label }} build \`${NATIVE_VERSION}\`" \
+            --notes "Patched native Claude ${{ matrix.platform_label }} build \
+via tweakcc API (version: ${{ steps.tweakcc.outputs.version }}), source version \`${VERSION}\`" \
             work/metadata.txt \
             "work/${OUT_BASE}.patched" \
-            "work/${OUT_BASE}.no-thinking.patched" \
-            "work/${OUT_BASE}.patched.color-diff.node" \
-            "work/${OUT_BASE}.no-thinking.patched.color-diff.node"
+            "work/${OUT_BASE}.no-inline-thinking.patched"
