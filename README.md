@@ -7,7 +7,6 @@ This repo publishes patched native Claude binaries that make output more transpa
 - Shows detailed tool calls instead of collapsed summaries.
 - Shows thinking inline and streams it in real time (unless you choose a `no-inline-thinking` asset).
 - Shows subagent `Prompt:` blocks by default.
-- Preserves syntax highlighting.
 
 Releases are now built from native installer binaries and repacked with the [`tweakcc` API](https://www.npmjs.com/package/tweakcc#api).
 
