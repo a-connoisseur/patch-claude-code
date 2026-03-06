@@ -24,17 +24,13 @@ claude --version
 ```
 
 1. Pick the release tag for your platform:
-   - Linux x64: `v<version>-linux-x64`
-   - Linux arm64: `v<version>-linux-arm64`
-   - macOS arm64: `v<version>-macos-arm64`
+   - macOS arm64: `macos-arm64`
+   - Linux x64: `linux-x64`
+   - Linux arm64: `linux-arm64`
 
-2. In that release, pick one binary:
-   - Linux regular: `claude.native.patched`
-   - Linux no-inline-thinking: `claude.native.no-inline-thinking.patched`
-   - macOS regular: `claude.native.macos.patched`
-   - macOS no-inline-thinking: `claude.native.macos.no-inline-thinking.patched`
+3. In that release, download either the regular binary or the no thinking display variant.
 
-3. Follow the install instructions for your platform below.
+4. Follow the install instructions for your platform below.
 
 ### Install (Linux)
 
