@@ -608,6 +608,24 @@ function patchThinkingStreaming(content) {
   candidates += lingerCandidates;
   patched += lingerPatched;
 
+  // Some builds suppress the live thinking row in brief mode even when
+  // `streamingThinking` is present. Match the dedicated PL1 live-row shape
+  // and render it whenever streamed thinking text exists.
+  let liveRowCandidates = 0;
+  let liveRowPatched = 0;
+  const liveThinkingRowPattern =
+    /([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)&&([A-Za-z_$][\w$]*)&&![A-Za-z_$][\w$]*&&([A-Za-z_$][\w$]*)\.createElement\(m,\{marginTop:1\},\4\.createElement\(([A-Za-z_$][\w$]*),\{param:\{type:"thinking",thinking:\3\.thinking\},addMargin:!1,isTranscriptMode:!0,verbose:([A-Za-z_$][\w$]*),hideInTranscript:!1\}\)\)/g;
+  output = output.replace(
+    liveThinkingRowPattern,
+    (_full, resultVar, _activeVar, thinkingVar, reactNs, component, verboseVar) => {
+      liveRowCandidates += 1;
+      liveRowPatched += 1;
+      return `${resultVar}=${thinkingVar}?.thinking&&${reactNs}.createElement(m,{marginTop:1},${reactNs}.createElement(${component},{param:{type:"thinking",thinking:${thinkingVar}.thinking},addMargin:!1,isTranscriptMode:!0,verbose:${verboseVar},hideInTranscript:!1}))`;
+    }
+  );
+  candidates += liveRowCandidates;
+  patched += liveRowPatched;
+
   // Ensure streaming thinking state is reset and updated from thinking deltas.
   // Without this, some builds keep stale previous-turn thinking and only show
   // final thinking text after completion.
