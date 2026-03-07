@@ -173,24 +173,6 @@ function resolveTargetPath(opts) {
   throw new Error("No target file found. Place `claude` in current folder or pass --file <path>.");
 }
 
-function findEnclosingFunctionRange(content, anchorIndex) {
-  if (anchorIndex === -1) {
-    return null;
-  }
-
-  const start = content.lastIndexOf("function ", anchorIndex);
-  if (start === -1) {
-    return null;
-  }
-
-  const end = content.indexOf("function ", anchorIndex);
-  if (end === -1 || end <= start) {
-    return null;
-  }
-
-  return { start, end, segment: content.slice(start, end) };
-}
-
 function patchCollapsedReadSearch(content, ctx = {}) {
   let candidates = 0;
   let patched = 0;
@@ -497,32 +479,6 @@ function patchThinkingCase(content, ctx = {}) {
     }
 
     index = start + caseNeedle.length;
-  }
-
-  for (const anchor of [
-    '"tengu_filtered_trailing_thinking_block"',
-    '"tengu_filtered_orphaned_thinking_message"',
-  ]) {
-    const anchorIndex = output.indexOf(anchor);
-    const fnRange = findEnclosingFunctionRange(output, anchorIndex);
-    if (!fnRange) {
-      continue;
-    }
-
-    const signatureMatch = fnRange.segment.match(/^function ([A-Za-z_$][\w$]*)\(([^)]*)\)\{/);
-    if (!signatureMatch) {
-      continue;
-    }
-
-    candidates += 1;
-    const fnName = signatureMatch[1];
-    const fnParams = signatureMatch[2];
-    const replacement = `function ${fnName}(${fnParams}){return A}`;
-
-    if (fnRange.segment !== replacement) {
-      patched += 1;
-      output = output.slice(0, fnRange.start) + replacement + output.slice(fnRange.end);
-    }
   }
 
   return {
