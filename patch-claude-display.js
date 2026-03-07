@@ -501,7 +501,7 @@ function patchThinkingStreaming(content) {
       if (props.includes("hidePastThinking:")) {
         return full;
       }
-      if (!props.includes("screenToggleId:") || !props.includes("conversationId:")) {
+      if (!props.includes("conversationId:") || !props.includes("isLoading:")) {
         return full;
       }
 
