@@ -173,14 +173,33 @@ function resolveTargetPath(opts) {
   throw new Error("No target file found. Place `claude` in current folder or pass --file <path>.");
 }
 
+function findEnclosingFunctionRange(content, anchorIndex) {
+  if (anchorIndex === -1) {
+    return null;
+  }
+
+  const start = content.lastIndexOf("function ", anchorIndex);
+  if (start === -1) {
+    return null;
+  }
+
+  const end = content.indexOf("function ", anchorIndex);
+  if (end === -1 || end <= start) {
+    return null;
+  }
+
+  return { start, end, segment: content.slice(start, end) };
+}
+
 function patchCollapsedReadSearch(content, ctx = {}) {
   let candidates = 0;
   let patched = 0;
+  let output = content;
 
   const pattern =
     /case"collapsed_read_search":return ([A-Za-z_$][\w$]*)\.createElement\(([A-Za-z_$][\w$]*),\{([^}]*)\}\)/g;
 
-  const updated = content.replace(pattern, (full, ns, component, props) => {
+  output = output.replace(pattern, (full, ns, component, props) => {
     if (!props.includes("verbose:")) {
       return full;
     }
@@ -197,8 +216,49 @@ function patchCollapsedReadSearch(content, ctx = {}) {
     return full;
   });
 
+  const o7qCaseNeedle = 'case"collapsed_read_search":{';
+  let index = 0;
+  while (true) {
+    const start = output.indexOf(o7qCaseNeedle, index);
+    if (start === -1) {
+      break;
+    }
+
+    const nextCase = output.indexOf('case"', start + o7qCaseNeedle.length);
+    const nextDefault = output.indexOf("default:", start + o7qCaseNeedle.length);
+    const endCandidates = [nextCase, nextDefault].filter((value) => value !== -1);
+    const end = endCandidates.length > 0 ? Math.min(...endCandidates) : output.length;
+    const segment = output.slice(start, end);
+
+    if (!segment.includes("createElement(") || !segment.includes("verbose:")) {
+      index = start + o7qCaseNeedle.length;
+      continue;
+    }
+
+    const callMatch = segment.match(
+      /createElement\(([A-Za-z_$][\w$]*),\{message:[^}]*inProgressToolUseIDs:[^}]*shouldAnimate:[^}]*verbose:[^,}]+,tools:[^}]*lookups:[^}]*isActiveGroup:[^}]*\}\)/
+    );
+    if (!callMatch) {
+      index = start + o7qCaseNeedle.length;
+      continue;
+    }
+
+    candidates += 1;
+    const replacement = ctx.preserveLength ? "verbose:1" : "verbose:!0";
+    const nextSegment = segment.replace(/verbose:[^,}]+/, replacement);
+
+    if (nextSegment !== segment) {
+      patched += 1;
+      output = output.slice(0, start) + nextSegment + output.slice(end);
+      index = start + nextSegment.length;
+      continue;
+    }
+
+    index = start + o7qCaseNeedle.length;
+  }
+
   return {
-    content: updated,
+    content: output,
     candidates,
     patched,
   };
@@ -437,6 +497,32 @@ function patchThinkingCase(content, ctx = {}) {
     }
 
     index = start + caseNeedle.length;
+  }
+
+  for (const anchor of [
+    '"tengu_filtered_trailing_thinking_block"',
+    '"tengu_filtered_orphaned_thinking_message"',
+  ]) {
+    const anchorIndex = output.indexOf(anchor);
+    const fnRange = findEnclosingFunctionRange(output, anchorIndex);
+    if (!fnRange) {
+      continue;
+    }
+
+    const signatureMatch = fnRange.segment.match(/^function ([A-Za-z_$][\w$]*)\(([^)]*)\)\{/);
+    if (!signatureMatch) {
+      continue;
+    }
+
+    candidates += 1;
+    const fnName = signatureMatch[1];
+    const fnParams = signatureMatch[2];
+    const replacement = `function ${fnName}(${fnParams}){return A}`;
+
+    if (fnRange.segment !== replacement) {
+      patched += 1;
+      output = output.slice(0, fnRange.start) + replacement + output.slice(fnRange.end);
+    }
   }
 
   return {
