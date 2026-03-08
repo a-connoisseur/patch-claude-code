@@ -31,7 +31,8 @@ Releases are now built from native installer binaries and repacked with the [`tw
 This installer:
 
 - detects your OS and CPU architecture
-- downloads the latest patched release for that platform
+- detects your installed native Claude version
+- downloads the matching patched release for that version and platform
 - replaces your existing `claude` binary
 - clears macOS quarantine attributes when needed
 

@@ -3,7 +3,7 @@
 set -euo pipefail
 
 REPO_SLUG="${PATCH_CLAUDE_REPO:-a-connoisseur/patch-claude-code}"
-API_URL="https://api.github.com/repos/${REPO_SLUG}/releases?per_page=100"
+API_BASE_URL="https://api.github.com/repos/${REPO_SLUG}"
 
 log() {
   printf '%s\n' "$*" >&2
@@ -74,66 +74,96 @@ EOF
   CLAUDE_PATH="$claude_path"
 }
 
+detect_installed_version() {
+  local version_output
+  version_output="$("$CLAUDE_PATH" --version 2>/dev/null || true)"
+
+  if [[ "$version_output" =~ ([0-9]+\.[0-9]+\.[0-9]+) ]]; then
+    CLAUDE_VERSION="${BASH_REMATCH[1]}"
+  else
+    fail "Could not parse Claude version from: ${version_output:-<empty>}"
+  fi
+}
+
+github_api_get() {
+  local url="$1"
+  local output_file="$2"
+
+  if [[ -n "${GITHUB_TOKEN:-}" ]]; then
+    curl -fsSL \
+      -H "Accept: application/vnd.github+json" \
+      -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+      -H "User-Agent: patch-claude-code-installer" \
+      "$url" \
+      -o "$output_file"
+  elif [[ -n "${GH_TOKEN:-}" ]]; then
+    curl -fsSL \
+      -H "Accept: application/vnd.github+json" \
+      -H "Authorization: Bearer ${GH_TOKEN}" \
+      -H "User-Agent: patch-claude-code-installer" \
+      "$url" \
+      -o "$output_file"
+  else
+    curl -fsSL \
+      -H "Accept: application/vnd.github+json" \
+      -H "User-Agent: patch-claude-code-installer" \
+      "$url" \
+      -o "$output_file"
+  fi
+}
+
 fetch_release_metadata() {
   require_cmd curl
   require_cmd python3
 
-  local release_json
-  if [[ -n "${GITHUB_TOKEN:-}" ]]; then
-    release_json="$(
-      curl -fsSL \
-        -H "Accept: application/vnd.github+json" \
-        -H "Authorization: Bearer ${GITHUB_TOKEN}" \
-        -H "User-Agent: patch-claude-code-installer" \
-        "$API_URL"
-    )"
-  elif [[ -n "${GH_TOKEN:-}" ]]; then
-    release_json="$(
-      curl -fsSL \
-        -H "Accept: application/vnd.github+json" \
-        -H "Authorization: Bearer ${GH_TOKEN}" \
-        -H "User-Agent: patch-claude-code-installer" \
-        "$API_URL"
-    )"
-  else
-    release_json="$(
-      curl -fsSL \
-        -H "Accept: application/vnd.github+json" \
-        -H "User-Agent: patch-claude-code-installer" \
-        "$API_URL"
-    )"
+  local release_json_file release_metadata release_api_url expected_tag
+  release_json_file="$(mktemp)" || fail "Failed to create temporary file for release metadata"
+  expected_tag="v${CLAUDE_VERSION}-${RELEASE_SUFFIX}"
+  release_api_url="${API_BASE_URL}/releases/tags/${expected_tag}"
+
+  github_api_get "$release_api_url" "$release_json_file" || {
+    rm -f "$release_json_file"
+    fail "Could not find a patched release for Claude ${CLAUDE_VERSION} on ${RELEASE_SUFFIX}"
+  }
+
+  if [[ ! -s "$release_json_file" ]]; then
+    rm -f "$release_json_file"
+    fail "Failed to fetch release metadata"
   fi
 
-  RELEASE_METADATA="$(
-    RELEASE_JSON="$release_json" python3 - "$RELEASE_SUFFIX" "$ASSET_NAME" <<'PY'
+  release_metadata="$(
+    python3 - "$ASSET_NAME" "$release_json_file" <<'PY'
 import json
-import os
-import re
 import sys
 
-suffix = sys.argv[1]
-asset_name = sys.argv[2]
-pattern = re.compile(rf"^v\d+\.\d+\.\d+-{re.escape(suffix)}(?:-\d+)?$")
+asset_name = sys.argv[1]
+release_json_file = sys.argv[2]
 
-releases = json.loads(os.environ["RELEASE_JSON"])
-if not isinstance(releases, list):
+with open(release_json_file, encoding="utf-8") as handle:
+    release = json.load(handle)
+
+if not isinstance(release, dict):
     raise SystemExit(1)
 
-for release in releases:
-    if release.get("draft") or release.get("prerelease"):
-        continue
-    tag = release.get("tag_name", "")
-    if not pattern.match(tag):
-        continue
-    for asset in release.get("assets", []):
-        if asset.get("name") == asset_name:
-            print(tag)
-            print(asset["browser_download_url"])
-            raise SystemExit(0)
+tag = release.get("tag_name", "")
+if not tag:
+    raise SystemExit(1)
+
+for asset in release.get("assets", []):
+    if asset.get("name") == asset_name:
+        print(tag)
+        print(asset["browser_download_url"])
+        raise SystemExit(0)
 
 raise SystemExit(1)
 PY
-  )" || fail "Could not find a release asset for ${RELEASE_SUFFIX}"
+  )" || {
+    rm -f "$release_json_file"
+    fail "Could not find the ${ASSET_NAME} asset in release ${expected_tag}"
+  }
+
+  rm -f "$release_json_file"
+  RELEASE_METADATA="$release_metadata"
 
   RELEASE_TAG="$(printf '%s\n' "$RELEASE_METADATA" | sed -n '1p')"
   DOWNLOAD_URL="$(printf '%s\n' "$RELEASE_METADATA" | sed -n '2p')"
@@ -190,6 +220,7 @@ verify_install() {
 main() {
   detect_platform
   find_existing_claude
+  detect_installed_version
   fetch_release_metadata
   download_asset
   install_asset
