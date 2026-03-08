@@ -875,25 +875,31 @@ function patchWelcomePatchedBadge(content) {
   let patched = 0;
   let output = content;
 
-  output = output.replace(/createElement\(Z,\{bold:!0\},"Claude Code"\)/g, (full) => {
-    candidates += 1;
-    const replacement = full.replace('"Claude Code"', '"Connoisseur\'s Code"');
-    if (replacement !== full) {
-      patched += 1;
-      return replacement;
+  output = output.replace(
+    /([A-Za-z_$][\w$]*)\.createElement\(([A-Za-z_$][\w$]*),\{bold:!0\},"Claude Code"\)/g,
+    (full, reactVar, textComponent) => {
+      candidates += 1;
+      const replacement = `${reactVar}.createElement(${textComponent},{bold:!0},"Connoisseur's Code")`;
+      if (replacement !== full) {
+        patched += 1;
+        return replacement;
+      }
+      return full;
     }
-    return full;
-  });
+  );
 
-  output = output.replace(/title:(`Claude Code v\$\{[\s\S]*?\.VERSION\}`)/g, (full, titleExpr) => {
-    candidates += 1;
-    const replacement = `title:${titleExpr}.replace("Claude Code","Connoisseur's Code")`;
-    if (replacement !== full) {
-      patched += 1;
-      return replacement;
+  output = output.replace(
+    /title:(`Claude Code v\$\{[\s\S]*?\.VERSION\}`),color:"professionalBlue",defaultTab:"general"/g,
+    (full, titleExpr) => {
+      candidates += 1;
+      const replacement = `title:${titleExpr}.replace("Claude Code","Connoisseur's Code"),color:"professionalBlue",defaultTab:"general"`;
+      if (replacement !== full) {
+        patched += 1;
+        return replacement;
+      }
+      return full;
     }
-    return full;
-  });
+  );
 
   return {
     content: output,
