@@ -78,20 +78,36 @@ fetch_release_metadata() {
   require_cmd curl
   require_cmd python3
 
-  local auth_header=()
+  local release_json
   if [[ -n "${GITHUB_TOKEN:-}" ]]; then
-    auth_header=(-H "Authorization: Bearer ${GITHUB_TOKEN}")
+    release_json="$(
+      curl -fsSL \
+        -H "Accept: application/vnd.github+json" \
+        -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+        -H "User-Agent: patch-claude-code-installer" \
+        "$API_URL"
+    )"
   elif [[ -n "${GH_TOKEN:-}" ]]; then
-    auth_header=(-H "Authorization: Bearer ${GH_TOKEN}")
+    release_json="$(
+      curl -fsSL \
+        -H "Accept: application/vnd.github+json" \
+        -H "Authorization: Bearer ${GH_TOKEN}" \
+        -H "User-Agent: patch-claude-code-installer" \
+        "$API_URL"
+    )"
+  else
+    release_json="$(
+      curl -fsSL \
+        -H "Accept: application/vnd.github+json" \
+        -H "User-Agent: patch-claude-code-installer" \
+        "$API_URL"
+    )"
   fi
 
   RELEASE_METADATA="$(
-    curl -fsSL \
-      -H "Accept: application/vnd.github+json" \
-      "${auth_header[@]}" \
-      "$API_URL" |
-      python3 - "$RELEASE_SUFFIX" "$ASSET_NAME" <<'PY'
+    RELEASE_JSON="$release_json" python3 - "$RELEASE_SUFFIX" "$ASSET_NAME" <<'PY'
 import json
+import os
 import re
 import sys
 
@@ -99,7 +115,10 @@ suffix = sys.argv[1]
 asset_name = sys.argv[2]
 pattern = re.compile(rf"^v\d+\.\d+\.\d+-{re.escape(suffix)}(?:-\d+)?$")
 
-releases = json.load(sys.stdin)
+releases = json.loads(os.environ["RELEASE_JSON"])
+if not isinstance(releases, list):
+    raise SystemExit(1)
+
 for release in releases:
     if release.get("draft") or release.get("prerelease"):
         continue
@@ -126,7 +145,7 @@ PY
 download_asset() {
   local tmpdir
   tmpdir="$(mktemp -d)"
-  trap 'rm -rf "$tmpdir"' EXIT
+  trap "rm -rf '$tmpdir'" EXIT
 
   DOWNLOADED_PATH="${tmpdir}/${ASSET_NAME}"
   log "Downloading ${ASSET_NAME} from ${RELEASE_TAG}"

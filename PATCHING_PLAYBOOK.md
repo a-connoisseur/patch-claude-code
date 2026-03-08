@@ -41,8 +41,9 @@ Default modules:
 - `thinking-inline`: always render thinking blocks
 - `thinking-streaming`: make streamed thinking update live
 - `subagent-prompt`: show backgrounded agent `Prompt:` outside transcript mode
+- `version-output`: append `(patched)` to plain `claude --version` output
 - `installer-label`: replace migration warning text with `(patched)`
-- `header-badge`: show a cyan `(patched)` marker next to the Claude Code version
+- `welcome-badge`: rename the main startup header to `Connoisseur's Code v...`
 
 Opt-in modules (kept for compatibility with legacy JS/Bun workflows):
 

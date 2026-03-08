@@ -837,15 +837,57 @@ function patchInstallerMigrationMessage(content, ctx = {}) {
   };
 }
 
-function patchHeaderPatchedBadge(content) {
-  const pattern =
-    /title:(`Claude Code v\$\{[\s\S]*?\.VERSION\}`),color:"professionalBlue",defaultTab:"general"/g;
+function patchVersionOutput(content) {
+  const needle = '}.VERSION} (Claude Code)`);return}';
   let candidates = 0;
   let patched = 0;
+  let output = content;
 
-  const output = content.replace(pattern, (full, titleExpr) => {
+  let index = output.indexOf(needle);
+  while (index !== -1) {
     candidates += 1;
-    const replacement = `title:SY.createElement(SY.Fragment,null,${titleExpr}," ",SY.createElement(T,{color:"cyan"},"(patched)")),color:"professionalBlue",defaultTab:"general"`;
+
+    const existingStart = Math.max(0, index - 64);
+    const existingSlice = output.slice(existingStart, index + needle.length + 32);
+    if (existingSlice.includes("\\n(patched)")) {
+      index = output.indexOf(needle, index + needle.length);
+      continue;
+    }
+
+    const replacement = '}.VERSION} (Claude Code)\\n(patched)`);return}';
+    output =
+      output.slice(0, index) +
+      replacement +
+      output.slice(index + needle.length);
+    patched += 1;
+    index = output.indexOf(needle, index + replacement.length);
+  }
+
+  return {
+    content: output,
+    candidates,
+    patched,
+  };
+}
+
+function patchWelcomePatchedBadge(content) {
+  let candidates = 0;
+  let patched = 0;
+  let output = content;
+
+  output = output.replace(/createElement\(Z,\{bold:!0\},"Claude Code"\)/g, (full) => {
+    candidates += 1;
+    const replacement = full.replace('"Claude Code"', '"Connoisseur\'s Code"');
+    if (replacement !== full) {
+      patched += 1;
+      return replacement;
+    }
+    return full;
+  });
+
+  output = output.replace(/title:(`Claude Code v\$\{[\s\S]*?\.VERSION\}`)/g, (full, titleExpr) => {
+    candidates += 1;
+    const replacement = `title:${titleExpr}.replace("Claude Code","Connoisseur's Code")`;
     if (replacement !== full) {
       patched += 1;
       return replacement;
@@ -979,14 +1021,19 @@ const PATCH_MODULES = [
     apply: patchSubagentPromptVisibility,
   },
   {
+    id: "version-output",
+    description: "Append (patched) to plain --version output",
+    apply: patchVersionOutput,
+  },
+  {
     id: "installer-label",
     description: "Replace npm/native installer warning text with (patched)",
     apply: patchInstallerMigrationMessage,
   },
   {
-    id: "header-badge",
-    description: "Show a cyan (patched) marker next to Claude Code version",
-    apply: patchHeaderPatchedBadge,
+    id: "welcome-badge",
+    description: "Rename startup and help Claude Code titles to Connoisseur's Code",
+    apply: patchWelcomePatchedBadge,
   },
   {
     id: "ripgrep-bun-runtime",
