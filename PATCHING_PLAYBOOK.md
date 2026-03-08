@@ -14,7 +14,6 @@ Create release variants:
 
 ```bash
 node scripts/patch-native-with-tweakcc.js --input ./claude --output ./claude.native.patched
-node scripts/patch-native-with-tweakcc.js --input ./claude --output ./claude.native.no-inline-thinking.patched --disable thinking-inline
 ```
 
 Useful modes:
@@ -29,7 +28,6 @@ macOS native binary signing:
 
 ```bash
 codesign -f -s - ./claude.native.macos.patched
-codesign -f -s - ./claude.native.macos.no-inline-thinking.patched
 ```
 
 ## Patch Modules
@@ -50,6 +48,19 @@ Opt-in modules (kept for compatibility with legacy JS/Bun workflows):
 - `ripgrep-bun-runtime`: use system `rg` for Bun runtime ripgrep entrypoint
 - `native-color-diff-addon`: load `color-diff.node` sidecar in npm-native builds
 - `native-runtime`: force Bun-built binaries onto native runtime code paths
+
+Thinking visibility note:
+
+- If you want thinking to show up in the UI without verbose mode, add this to Claude settings:
+
+```json
+{
+  "showThinkingSummaries": true
+}
+```
+
+- If you prefer the old behavior where thinking stays hidden unless you use verbose mode, leave this unset.
+- Supported settings files include `~/.claude/settings.json`, `.claude/settings.json`, and `.claude/settings.local.json`.
 
 ## Target-Specific Behavior
 
@@ -91,9 +102,8 @@ Current pipeline:
 1. Run a platform matrix for `linux-x64`, `linux-arm64`, and `macos-arm64`.
 2. Download the platform-native installer build via `https://claude.ai/install.sh`.
 3. Install `tweakcc` and patch native binaries via `scripts/patch-native-with-tweakcc.js`.
-4. Build and publish two native artifacts per platform release:
+4. Build and publish one native artifact per platform release:
    - `<native_basename>.patched`
-   - `<native_basename>.no-inline-thinking.patched`
 5. Publish platform tags:
    - `v<native_version>-linux-x64`
    - `v<native_version>-linux-arm64`
