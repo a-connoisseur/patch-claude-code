@@ -837,6 +837,29 @@ function patchInstallerMigrationMessage(content, ctx = {}) {
   };
 }
 
+function patchHeaderPatchedBadge(content) {
+  const pattern =
+    /title:(`Claude Code v\$\{[\s\S]*?\.VERSION\}`),color:"professionalBlue",defaultTab:"general"/g;
+  let candidates = 0;
+  let patched = 0;
+
+  const output = content.replace(pattern, (full, titleExpr) => {
+    candidates += 1;
+    const replacement = `title:SY.createElement(SY.Fragment,null,${titleExpr}," ",SY.createElement(T,{color:"cyan"},"(patched)")),color:"professionalBlue",defaultTab:"general"`;
+    if (replacement !== full) {
+      patched += 1;
+      return replacement;
+    }
+    return full;
+  });
+
+  return {
+    content: output,
+    candidates,
+    patched,
+  };
+}
+
 function patchForceNativeRuntime(content) {
   const pattern =
     /function ([A-Za-z_$][\w$]*)\(\)\{return typeof Bun<"u"&&Array\.isArray\(Bun\.embeddedFiles\)&&Bun\.embeddedFiles\.length>0\}/g;
@@ -959,6 +982,11 @@ const PATCH_MODULES = [
     id: "installer-label",
     description: "Replace npm/native installer warning text with (patched)",
     apply: patchInstallerMigrationMessage,
+  },
+  {
+    id: "header-badge",
+    description: "Show a cyan (patched) marker next to Claude Code version",
+    apply: patchHeaderPatchedBadge,
   },
   {
     id: "ripgrep-bun-runtime",

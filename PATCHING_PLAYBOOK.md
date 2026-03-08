@@ -42,6 +42,7 @@ Default modules:
 - `thinking-streaming`: make streamed thinking update live
 - `subagent-prompt`: show backgrounded agent `Prompt:` outside transcript mode
 - `installer-label`: replace migration warning text with `(patched)`
+- `header-badge`: show a cyan `(patched)` marker next to the Claude Code version
 
 Opt-in modules (kept for compatibility with legacy JS/Bun workflows):
 
