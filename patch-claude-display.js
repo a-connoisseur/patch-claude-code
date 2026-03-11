@@ -815,6 +815,38 @@ function patchBashStableStartCwd(content, ctx = {}) {
   };
 }
 
+function patchDisableSpinnerTips(content, ctx = {}) {
+  const pattern = /if\([A-Za-z_$][\w$]*\(\)\.spinnerTipsEnabled===!1\)return;/g;
+  const forcedOff = "if(!0)return;";
+
+  let candidates = 0;
+  let patched = 0;
+  const output = content.replace(pattern, (full) => {
+    candidates += 1;
+
+    if (!ctx.preserveLength) {
+      if (full === forcedOff) {
+        return full;
+      }
+      patched += 1;
+      return forcedOff;
+    }
+
+    if (forcedOff.length > full.length) {
+      return full;
+    }
+
+    patched += 1;
+    return `${forcedOff}${" ".repeat(full.length - forcedOff.length)}`;
+  });
+
+  return {
+    content: output,
+    candidates,
+    patched,
+  };
+}
+
 function patchInstallerMigrationMessage(content, ctx = {}) {
   const needle = "switched from npm to native installer";
   let output = content;
@@ -1061,6 +1093,11 @@ const PATCH_MODULES = [
     id: "bash-stable-start-cwd",
     description: "Force Bash tool to start from a stable cwd each invocation",
     apply: patchBashStableStartCwd,
+  },
+  {
+    id: "disable-spinner-tips",
+    description: "Disable spinner tips regardless of settings",
+    apply: patchDisableSpinnerTips,
   },
   {
     id: "version-output",

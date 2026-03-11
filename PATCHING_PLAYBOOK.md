@@ -42,6 +42,7 @@ Default modules:
 - `thinking-streaming`: make streamed thinking update live
 - `subagent-prompt`: show backgrounded agent `Prompt:` outside transcript mode
 - `bash-stable-start-cwd`: keep Bash tool invocations anchored to a stable start directory
+- `disable-spinner-tips`: disable spinner tips regardless of settings
 - `version-output`: append `(patched)` to plain `claude --version` output
 - `installer-label`: replace migration warning text with `(patched)`
 - `welcome-badge`: rename the main startup header to `Connoisseur's Code v...`
