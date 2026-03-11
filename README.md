@@ -6,6 +6,7 @@ This repo publishes patched native Claude binaries that make output more transpa
 
 - Shows detailed tool calls instead of collapsed summaries.
 - Shows subagent `Prompt:` blocks by default.
+- Keeps Bash tool executions anchored to a stable starting directory.
 - Renames the startup header to `Connoisseur's Code v...`.
 - Appends `(patched)` to plain `claude --version` output.
 

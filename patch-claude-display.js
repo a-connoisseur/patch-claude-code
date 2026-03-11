@@ -784,6 +784,37 @@ function patchSubagentPromptVisibility(content, ctx = {}) {
   };
 }
 
+function patchBashStableStartCwd(content, ctx = {}) {
+  const pattern =
+    /preventCwdChanges:([^,}]+)(,toolUseId:[A-Za-z_$][\w$]*\.toolUseId\}\))/g;
+
+  let candidates = 0;
+  let patched = 0;
+
+  const output = content.replace(pattern, (full, currentValue, suffix) => {
+    candidates += 1;
+
+    const normalized = currentValue.trim();
+    if (normalized === "!0" || normalized === "1" || normalized === "true") {
+      return full;
+    }
+
+    const forced = ctx.preserveLength ? "1" : "!0";
+    const replacement = `preventCwdChanges:${forced}${suffix}`;
+    if (replacement !== full) {
+      patched += 1;
+      return replacement;
+    }
+    return full;
+  });
+
+  return {
+    content: output,
+    candidates,
+    patched,
+  };
+}
+
 function patchInstallerMigrationMessage(content, ctx = {}) {
   const needle = "switched from npm to native installer";
   let output = content;
@@ -1025,6 +1056,11 @@ const PATCH_MODULES = [
     id: "subagent-prompt",
     description: "Show subagent Prompt blocks outside transcript mode",
     apply: patchSubagentPromptVisibility,
+  },
+  {
+    id: "bash-stable-start-cwd",
+    description: "Force Bash tool to start from a stable cwd each invocation",
+    apply: patchBashStableStartCwd,
   },
   {
     id: "version-output",
