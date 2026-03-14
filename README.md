@@ -40,6 +40,9 @@ This installer detects your OS and CPU architecture and downloads the matching p
 curl -fsSL https://raw.githubusercontent.com/a-connoisseur/patch-claude-code/main/install-patched-claude.sh | bash
 ```
 
+If you'd rather avoid blindly running scripts from the internet, you can do it the manual way below.
+That said, the binaries are built on Github Actions and the patcher is also free for you to see and modify, so there's no reason to trust this repo or the release builds other than convenience.
+
 ### Manual Install (From Releases, native only)
 
 1. Pick the release tag for your platform:
