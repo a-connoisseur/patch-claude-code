@@ -2,48 +2,26 @@
 
 ## What this does
 
-This repo publishes patched native Claude binaries that make output more transparent without verbose mode:
+This repo publishes patched native Claude binaries that make output more transparent without verbose mode.
+Here is an exhaustive list of things it changes:
 
 - Shows detailed tool calls instead of collapsed summaries.
-- Shows subagent `Prompt:` blocks by default.
-- Disables spinner tips regardless of user settings.
-- Renames the startup header to `Connoisseur's Code v...`.
+- Hard disables spinner tips.
+- Streams thinking live in the UI. This is helpful for instances where Claude thinks for over 10 minutes and you want to know if it's actually still doing something.
+- Shows subagent `Prompt:` blocks in the non-verbose UI.
+- Renames the startup header to `Connoisseur's Code v...` (this makes it easy to identify when Claude has auto updated and lost the patch).
 - Appends `(patched)` to plain `claude --version` output.
 
-Thinking note:
+#### Thinking note:
 
-- If you want thinking to show up in the UI without verbose mode, add this to your Claude settings:
+- If you want thinking to stream live in the UI without verbose mode, add this to your Claude settings:
 
 ```json
-{
-  "showThinkingSummaries": true
-}
+"showThinkingSummaries": true
 ```
-
-- If you prefer the old behavior where thinking stays hidden unless you use verbose mode, leave this unset.
 - Settings can come from `~/.claude/settings.json`, `.claude/settings.json`, or `.claude/settings.local.json`.
 
-Releases are now built from native installer binaries and repacked with the [`tweakcc` API](https://www.npmjs.com/package/tweakcc#api).
-
 ## Quick Start
-
-### Automatic Install
-
-This installer:
-
-- detects your OS and CPU architecture
-- detects your installed native Claude version
-- downloads the matching patched release for that version and platform
-- replaces your existing `claude` binary
-- clears macOS quarantine attributes when needed
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/a-connoisseur/patch-claude-code/main/install-patched-claude.sh | bash
-```
-
-If `claude` is not already installed, the script stops and tells you to install the official native Claude binary first.
-
-### Manual Install (From Releases, native only)
 
 ### Prerequisite
 
@@ -54,6 +32,15 @@ npm uninstall -g @anthropic-ai/claude-code
 curl -fsSL https://claude.ai/install.sh | bash
 claude --version
 ```
+
+### Automatic Install
+
+This installer detects your OS and CPU architecture and downloads the matching patched release for that version and platform.
+```bash
+curl -fsSL https://raw.githubusercontent.com/a-connoisseur/patch-claude-code/main/install-patched-claude.sh | bash
+```
+
+### Manual Install (From Releases, native only)
 
 1. Pick the release tag for your platform:
    - macOS arm64: `macos-arm64`
