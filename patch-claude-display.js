@@ -785,28 +785,49 @@ function patchSubagentPromptVisibility(content, ctx = {}) {
 }
 
 function patchDisableSpinnerTips(content, ctx = {}) {
-  const pattern = /if\([A-Za-z_$][\w$]*\(\)\.spinnerTipsEnabled===!1\)return;/g;
-  const forcedOff = "if(!0)return;";
+  const disabledGuardPattern = /if\([A-Za-z_$][\w$]*\(\)\.spinnerTipsEnabled===!1\)return;/g;
+  const enabledExpressionPattern = /[A-Za-z_$][\w$]*\.spinnerTipsEnabled!==!1/g;
+  const forcedReturn = "if(!0)return;";
+  const forcedDisabled = "!1";
 
   let candidates = 0;
   let patched = 0;
-  const output = content.replace(pattern, (full) => {
+  let output = content.replace(disabledGuardPattern, (full) => {
     candidates += 1;
 
     if (!ctx.preserveLength) {
-      if (full === forcedOff) {
+      if (full === forcedReturn) {
         return full;
       }
       patched += 1;
-      return forcedOff;
+      return forcedReturn;
     }
 
-    if (forcedOff.length > full.length) {
+    if (forcedReturn.length > full.length) {
       return full;
     }
 
     patched += 1;
-    return `${forcedOff}${" ".repeat(full.length - forcedOff.length)}`;
+    return `${forcedReturn}${" ".repeat(full.length - forcedReturn.length)}`;
+  });
+
+  output = output.replace(enabledExpressionPattern, (full) => {
+    candidates += 1;
+
+    if (!ctx.preserveLength) {
+      if (full === forcedDisabled) {
+        return full;
+      }
+      patched += 1;
+      return forcedDisabled;
+    }
+
+    if (forcedDisabled.length > full.length) {
+      return full;
+    }
+
+    patched += 1;
+    return `${forcedDisabled}${" ".repeat(full.length - forcedDisabled.length)}`;
   });
 
   return {
