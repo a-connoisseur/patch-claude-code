@@ -709,6 +709,10 @@ function patchThinkingStreaming(content) {
 
 function patchSubagentPromptVisibility(content, ctx = {}) {
   const backgroundedAnchor = '"Backgrounded agent"';
+  const livePromptMountPattern =
+    /([A-Za-z_$][\w$]*)&&([A-Za-z_$][\w$]*)&&([A-Za-z_$][\w$]*)\.createElement\(m,\{marginBottom:1\},\3\.createElement\(([A-Za-z_$][\w$]*),\{prompt:\2\}\)\)/g;
+  const livePromptEmptyStatePattern =
+    /if\(([A-Za-z_$][\w$]*)\.length===0&&!?\(([A-Za-z_$][\w$]*)&&([A-Za-z_$][\w$]*)\)\)return/g;
   let output = content;
   let candidates = 0;
   let patched = 0;
@@ -784,6 +788,46 @@ function patchSubagentPromptVisibility(content, ctx = {}) {
 
     index = anchorIndex + backgroundedAnchor.length;
   }
+
+  output = output.replace(livePromptMountPattern, (full, transcriptModeVar, promptVar, reactNs, promptComponent) => {
+    candidates += 1;
+
+    const replacement = `${promptVar}&&${reactNs}.createElement(m,{marginBottom:1},${reactNs}.createElement(${promptComponent},{prompt:${promptVar}}))`;
+    if (!ctx.preserveLength) {
+      if (full === replacement) {
+        return full;
+      }
+      patched += 1;
+      return replacement;
+    }
+
+    if (replacement.length > full.length) {
+      return full;
+    }
+
+    patched += 1;
+    return `${replacement}${" ".repeat(full.length - replacement.length)}`;
+  });
+
+  output = output.replace(livePromptEmptyStatePattern, (full, rowsVar, transcriptModeVar, promptVar) => {
+    candidates += 1;
+
+    const replacement = `if(${rowsVar}.length===0&&!${promptVar})return`;
+    if (!ctx.preserveLength) {
+      if (full === replacement) {
+        return full;
+      }
+      patched += 1;
+      return replacement;
+    }
+
+    if (replacement.length > full.length) {
+      return full;
+    }
+
+    patched += 1;
+    return `${replacement}${" ".repeat(full.length - replacement.length)}`;
+  });
 
   return {
     content: output,
