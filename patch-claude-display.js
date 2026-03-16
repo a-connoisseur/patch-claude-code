@@ -620,7 +620,7 @@ function patchThinkingStreaming(content) {
     (_full, resultVar, _activeVar, thinkingVar, reactNs, component, verboseVar) => {
       liveRowCandidates += 1;
       liveRowPatched += 1;
-      return `${resultVar}=${thinkingVar}?.thinking&&${reactNs}.createElement(m,{marginTop:1},${reactNs}.createElement(${component},{param:{type:"thinking",thinking:${thinkingVar}.thinking},addMargin:!1,isTranscriptMode:!0,verbose:${verboseVar},hideInTranscript:!1}))`;
+      return `${resultVar}=${thinkingVar}?.isStreaming&&${thinkingVar}?.thinking&&${reactNs}.createElement(m,{marginTop:1},${reactNs}.createElement(${component},{param:{type:"thinking",thinking:${thinkingVar}.thinking},addMargin:!1,isTranscriptMode:!0,verbose:${verboseVar},hideInTranscript:!1}))`;
     }
   );
   candidates += liveRowCandidates;
@@ -662,6 +662,12 @@ function patchThinkingStreaming(content) {
           const thinkingStartBefore = `case"thinking":case"redacted_thinking":${setModeParam}("thinking");return;`;
           const thinkingStartAfter = `case"thinking":case"redacted_thinking":${setStreamingThinkingParam}?.(()=>({thinking:"",isStreaming:!0,streamingEndedAt:void 0})),${setModeParam}("thinking");return;`;
 
+          const textStartBefore = `case"text":${setModeParam}("responding");return;`;
+          const textStartAfter = `case"text":${setStreamingThinkingParam}?.(null),${setModeParam}("responding");return;`;
+
+          const messageDeltaBefore = `case"message_delta":${setModeParam}("responding");return;`;
+          const messageDeltaAfter = `case"message_delta":${setStreamingThinkingParam}?.(null),${setModeParam}("responding");return;`;
+
           const thinkingStateParam = "__cc_prevStreamingThinking";
           const thinkingDeltaBefore = `case"thinking_delta":${appendOutputParam}(${eventParam}.event.delta.thinking);return;`;
           const thinkingDeltaAfter = `case"thinking_delta":${appendOutputParam}(${eventParam}.event.delta.thinking),${setStreamingThinkingParam}?.((${thinkingStateParam})=>({thinking:(${thinkingStateParam}?.thinking??"")+${eventParam}.event.delta.thinking,isStreaming:!0,streamingEndedAt:void 0}));return;`;
@@ -670,6 +676,8 @@ function patchThinkingStreaming(content) {
             [requestStartBefore, requestStartAfter],
             [messageStopBefore, messageStopAfter],
             [thinkingStartBefore, thinkingStartAfter],
+            [textStartBefore, textStartAfter],
+            [messageDeltaBefore, messageDeltaAfter],
             [thinkingDeltaBefore, thinkingDeltaAfter],
           ];
 
@@ -946,6 +954,45 @@ function patchWelcomePatchedBadge(content) {
     (full, titleExpr) => {
       candidates += 1;
       const replacement = `title:${titleExpr}.replace("Claude Code","Connoisseur's Code"),color:"professionalBlue",defaultTab:"general"`;
+      if (replacement !== full) {
+        patched += 1;
+        return replacement;
+      }
+      return full;
+    }
+  );
+
+  output = output.replace(
+    /"Welcome to Claude Code for "/g,
+    (full) => {
+      candidates += 1;
+      const replacement = `"Welcome to Connoisseur's Code for "`;
+      if (replacement !== full) {
+        patched += 1;
+        return replacement;
+      }
+      return full;
+    }
+  );
+
+  output = output.replace(
+    /([A-Za-z_$][\w$]*)\("claude",([A-Za-z_$][\w$]*)\)\("Claude Code"\)/g,
+    (full, colorFn, themeVar) => {
+      candidates += 1;
+      const replacement = `${colorFn}("claude",${themeVar})("Connoisseur's Code")`;
+      if (replacement !== full) {
+        patched += 1;
+        return replacement;
+      }
+      return full;
+    }
+  );
+
+  output = output.replace(
+    /([A-Za-z_$][\w$]*)\("claude",([A-Za-z_$][\w$]*)\)\(" Claude Code "\)/g,
+    (full, colorFn, themeVar) => {
+      candidates += 1;
+      const replacement = `${colorFn}("claude",${themeVar})(" Connoisseur's Code ")`;
       if (replacement !== full) {
         patched += 1;
         return replacement;
