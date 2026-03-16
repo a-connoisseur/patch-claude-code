@@ -48,13 +48,13 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: "20"
+          node-version: "24"
 
-      - name: Install tweakcc
+      - name: Install dependencies
         id: tweakcc
         run: |
           set -euo pipefail
-          npm install --no-save tweakcc
+          npm install
           VERSION="$(node -e "console.log(require('./node_modules/tweakcc/package.json').version)")"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
@@ -138,7 +138,7 @@ jobs:
           OUT_BASE="${{ matrix.native_basename }}"
           NEEDS_CODESIGN="${{ matrix.needs_codesign }}"
 
-          node scripts/patch-native-with-tweakcc.js \
+          node scripts/patch-native-with-tweakcc.ts \
             --input work/claude.native.original \
             --output "work/${OUT_BASE}.patched"
           chmod +x "work/${OUT_BASE}.patched"

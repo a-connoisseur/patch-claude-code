@@ -1,8 +1,7 @@
 const fs = require("fs");
 const path = require("path");
-const { execFileSync } = require("child_process");
 
-const TARGET_FILE_ENCODING = "latin1";
+const TARGET_FILE_ENCODING = "utf8";
 
 function printHelp() {
   console.log("Claude display patcher");
@@ -10,18 +9,14 @@ function printHelp() {
   console.log("");
   console.log("Usage:");
   console.log(
-    "  node patch-claude-display.js [--file <path>] [--dry-run] [--restore] [--disable <ids>] [--enable <ids>] [--codesign] [--codesign-identity <identity>] [--allow-size-change] [--list-patches]"
+    "  node patch-claude-display.js --file <path> [--dry-run] [--disable <ids>] [--enable <ids>] [--list-patches]"
   );
   console.log("");
   console.log("Options:");
-  console.log("  --file <path>   Target Claude JS file (auto-uses ./claude when present)");
+  console.log("  --file <path>   Target extracted Claude JS content");
   console.log("  --dry-run       Show what would change without writing");
-  console.log("  --restore       Restore from backup");
   console.log("  --disable <ids> Comma-separated patch ids to disable");
-  console.log("  --enable <ids>  Comma-separated opt-in patch ids to enable");
-  console.log("  --codesign      Re-sign target with macOS codesign after patch/restore");
-  console.log("  --codesign-identity <id> codesign identity (default: - for ad-hoc)");
-  console.log("  --allow-size-change Allow size-changing edits on binary targets (usually non-runnable)");
+  console.log("  --enable <ids>  Comma-separated patch ids to enable");
   console.log("  --list-patches  Print available patch ids and exit");
   console.log("  --help, -h      Show this help");
 }
@@ -43,13 +38,9 @@ function parseArgs(argv) {
   const opts = {
     file: null,
     dryRun: false,
-    restore: false,
     disable: [],
     enable: [],
     listPatches: false,
-    codesign: false,
-    codesignIdentity: "-",
-    allowSizeChange: false,
     help: false,
   };
 
@@ -64,8 +55,6 @@ function parseArgs(argv) {
       i += 1;
     } else if (arg === "--dry-run") {
       opts.dryRun = true;
-    } else if (arg === "--restore") {
-      opts.restore = true;
     } else if (arg === "--disable") {
       const value = argv[i + 1];
       if (!value) {
@@ -82,18 +71,6 @@ function parseArgs(argv) {
       i += 1;
     } else if (arg === "--list-patches") {
       opts.listPatches = true;
-    } else if (arg === "--codesign") {
-      opts.codesign = true;
-    } else if (arg === "--codesign-identity") {
-      const value = argv[i + 1];
-      if (!value) {
-        throw new Error("Missing value for --codesign-identity");
-      }
-      opts.codesignIdentity = value;
-      opts.codesign = true;
-      i += 1;
-    } else if (arg === "--allow-size-change") {
-      opts.allowSizeChange = true;
     } else if (arg === "--help" || arg === "-h") {
       opts.help = true;
     } else {
@@ -102,56 +79,6 @@ function parseArgs(argv) {
   }
 
   return opts;
-}
-
-function looksLikeMachO(filePath) {
-  const magics = new Set([
-    "feedface",
-    "cefaedfe",
-    "feedfacf",
-    "cffaedfe",
-    "cafebabe",
-    "bebafeca",
-    "cafebabf",
-    "bfbafeca",
-  ]);
-
-  const fd = fs.openSync(filePath, "r");
-  try {
-    const header = Buffer.alloc(4);
-    const bytesRead = fs.readSync(fd, header, 0, 4, 0);
-    if (bytesRead < 4) {
-      return false;
-    }
-    return magics.has(header.toString("hex"));
-  } finally {
-    fs.closeSync(fd);
-  }
-}
-
-function looksLikeBinary(filePath) {
-  const fd = fs.openSync(filePath, "r");
-  try {
-    const sample = Buffer.alloc(4096);
-    const bytesRead = fs.readSync(fd, sample, 0, sample.length, 0);
-    if (bytesRead === 0) {
-      return false;
-    }
-    for (let i = 0; i < bytesRead; i += 1) {
-      if (sample[i] === 0) {
-        return true;
-      }
-    }
-    return false;
-  } finally {
-    fs.closeSync(fd);
-  }
-}
-
-function runCodesign(filePath, identity) {
-  execFileSync("codesign", ["-f", "-s", identity, filePath], {
-    stdio: "inherit",
-  });
 }
 
 function ensureFileExists(filePath) {
@@ -165,12 +92,12 @@ function resolveTargetPath(opts) {
     return path.resolve(opts.file);
   }
 
-  const localClaude = path.resolve("claude");
-  if (fs.existsSync(localClaude)) {
-    return localClaude;
+  const localContent = path.resolve("content.js");
+  if (fs.existsSync(localContent)) {
+    return localContent;
   }
 
-  throw new Error("No target file found. Place `claude` in current folder or pass --file <path>.");
+  throw new Error("No target file found. Pass --file <path> or place content.js in the current folder.");
 }
 
 function patchCollapsedReadSearch(content, ctx = {}) {
@@ -1052,94 +979,7 @@ function patchWelcomePatchedBadge(content) {
   };
 }
 
-function patchForceNativeRuntime(content) {
-  const pattern =
-    /function ([A-Za-z_$][\w$]*)\(\)\{return typeof Bun<"u"&&Array\.isArray\(Bun\.embeddedFiles\)&&Bun\.embeddedFiles\.length>0\}/g;
-  let candidates = 0;
-  let patched = 0;
-
-  const output = content.replace(pattern, (full, fnName) => {
-    candidates += 1;
-    const replacement = `function ${fnName}(){return process.versions.bun!==void 0}`;
-    if (full !== replacement) {
-      patched += 1;
-      return replacement;
-    }
-    return full;
-  });
-
-  return {
-    content: output,
-    candidates,
-    patched,
-  };
-}
-
-function patchRipgrepForBunRuntime(content) {
-  const pattern =
-    /function ([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*)\)\{if\(process\.env\.RIPGREP_EMBEDDED==="true"\)return ([A-Za-z_$][\w$]*)\(process\.execPath,\["--no-config",\.\.\.\2\],\{argv0:"rg",stdio:"inherit"\}\)\.status\?\?1;/g;
-  let candidates = 0;
-  let patched = 0;
-
-  const output = content.replace(pattern, (full, fnName, argsName, spawnName) => {
-    candidates += 1;
-    if (full.includes("if(process.versions.bun!==void 0)return")) {
-      return full;
-    }
-    patched += 1;
-    return `${full}if(process.versions.bun!==void 0)return ${spawnName}("rg",["--no-config",...${argsName}],{stdio:"inherit"}).status??1;`;
-  });
-
-  return {
-    content: output,
-    candidates,
-    patched,
-  };
-}
-
-function patchNativeColorDiffAddon(content) {
-  const pattern =
-    /\(\(\)=>\{throw new Error\([^)]*color-diff\.node[^)]*\);\}\)\(\)/g;
-  let candidates = 0;
-  let patched = 0;
-
-  const replacement =
-    `(()=>{let __cc_require=typeof require=="function"?require:typeof b6=="function"?b6:null;if(!__cc_require)throw new Error("Cannot require module ../../color-diff.node");let __cc_execDir=process.execPath.replace(/[\\\\/][^\\\\/]*$/,""),__cc_paths=[process.env.CLAUDE_CODE_COLOR_DIFF_NODE_PATH,process.execPath+".color-diff.node",(__cc_execDir?__cc_execDir+"/":"")+"color-diff.node","./color-diff.node"];for(let __cc_path of __cc_paths){if(!__cc_path)continue;try{return __cc_require(__cc_path)}catch{}}throw new Error("Cannot require module ../../color-diff.node")})()`;
-
-  const output = content.replace(pattern, (full) => {
-    candidates += 1;
-    if (full === replacement) {
-      return full;
-    }
-    patched += 1;
-    return replacement;
-  });
-
-  return {
-    content: output,
-    candidates,
-    patched,
-  };
-}
-
-function patchTargetShebang(content) {
-  const shebangPattern = /^#!\/usr\/bin\/env node([^\n]*)/;
-  const hasNodeShebang = shebangPattern.test(content);
-  const output = content.replace(shebangPattern, "#!/usr/bin/env bun$1");
-
-  return {
-    content: output,
-    candidates: hasNodeShebang ? 1 : 0,
-    patched: hasNodeShebang && output !== content ? 1 : 0,
-  };
-}
-
 const PATCH_MODULES = [
-  {
-    id: "shebang",
-    description: "Rewrite #!/usr/bin/env node to bun",
-    apply: patchTargetShebang,
-  },
   {
     id: "tool-call-verbose",
     description: "Force verbose collapsed read/search rendering",
@@ -1190,24 +1030,6 @@ const PATCH_MODULES = [
     description: "Rename startup and help Claude Code titles to Connoisseur's Code",
     apply: patchWelcomePatchedBadge,
   },
-  {
-    id: "ripgrep-bun-runtime",
-    description: "Use system rg for Bun runtime ripgrep entrypoint",
-    apply: patchRipgrepForBunRuntime,
-    defaultEnabled: false,
-  },
-  {
-    id: "native-color-diff-addon",
-    description: "Load color-diff.node sidecar in npm-native builds",
-    apply: patchNativeColorDiffAddon,
-    defaultEnabled: false,
-  },
-  {
-    id: "native-runtime",
-    description: "Force Bun builds to run native-runtime code paths",
-    apply: patchForceNativeRuntime,
-    defaultEnabled: false,
-  },
 ];
 
 function resolveSelectedPatchIds(opts) {
@@ -1225,9 +1047,7 @@ function resolveSelectedPatchIds(opts) {
     throw new Error(`Conflicting patch id(s) in --enable and --disable: ${conflicts.join(", ")}`);
   }
 
-  const selected = new Set(
-    PATCH_MODULES.filter((module) => module.defaultEnabled !== false).map((module) => module.id)
-  );
+  const selected = new Set(PATCH_MODULES.map((module) => module.id));
   for (const id of enableSet) {
     selected.add(id);
   }
@@ -1235,7 +1055,7 @@ function resolveSelectedPatchIds(opts) {
     selected.delete(id);
   }
 
-  return { selected, disableSet };
+  return { selected };
 }
 
 function main() {
@@ -1257,8 +1077,7 @@ function main() {
   if (opts.listPatches) {
     console.log("Available patches:");
     for (const module of PATCH_MODULES) {
-      const optInLabel = module.defaultEnabled === false ? " (opt-in)" : "";
-      console.log(`  ${module.id}${optInLabel} - ${module.description}`);
+      console.log(`  ${module.id} - ${module.description}`);
     }
     process.exit(0);
   }
@@ -1279,91 +1098,24 @@ function main() {
     console.error(`Error: ${error.message}`);
     process.exit(1);
   }
-  const backupPath = `${targetPath}.display.backup`;
-
-  if (opts.restore) {
-    if (!fs.existsSync(backupPath)) {
-      console.error(`Error: Backup file not found: ${backupPath}`);
-      process.exit(1);
-    }
-
-    if (opts.dryRun) {
-      console.log(`Would restore ${targetPath} from ${backupPath}`);
-      if (opts.codesign) {
-        console.log(`Would run: codesign -f -s ${opts.codesignIdentity} ${targetPath}`);
-      }
-      process.exit(0);
-    }
-
-    fs.copyFileSync(backupPath, targetPath);
-    console.log(`Restored ${targetPath} from backup.`);
-
-    if (opts.codesign) {
-      try {
-        runCodesign(targetPath, opts.codesignIdentity);
-        console.log(`Codesigned: ${targetPath} (identity: ${opts.codesignIdentity})`);
-      } catch (error) {
-        console.error(`Error: codesign failed for ${targetPath}: ${error.message}`);
-        process.exit(1);
-      }
-    }
-
-    process.exit(0);
-  }
 
   ensureFileExists(targetPath);
-  const isMachOTarget = looksLikeMachO(targetPath);
-  const isBinaryTarget = looksLikeBinary(targetPath);
-  const preserveLength = isBinaryTarget && !opts.allowSizeChange;
-
-  if (preserveLength) {
-    console.log("Detected binary target: running in size-preserving mode.");
-    console.log("Size-changing modules will be skipped automatically.");
-  } else if (isBinaryTarget && opts.allowSizeChange) {
-    console.log("Detected binary target with --allow-size-change.");
-    console.log("Warning: size-changing patches usually produce a non-runnable binary.");
-  }
-
   const original = fs.readFileSync(targetPath, TARGET_FILE_ENCODING);
   let currentContent = original;
   const patchResults = new Map();
 
   for (const module of PATCH_MODULES) {
     if (!selectedPatchIds.has(module.id)) {
-      const reason =
-        module.defaultEnabled === false && !patchSelection.disableSet.has(module.id)
-          ? "not enabled (opt-in)"
-          : "disabled";
       patchResults.set(module.id, {
         candidates: 0,
         patched: 0,
         skipped: true,
-        reason,
+        reason: "disabled",
       });
       continue;
     }
 
-    if (isBinaryTarget && module.id === "shebang") {
-      patchResults.set(module.id, {
-        candidates: 0,
-        patched: 0,
-        skipped: true,
-        reason: "not applicable for binary target",
-      });
-      continue;
-    }
-
-    const result = module.apply(currentContent, { preserveLength });
-    const hasSizeChange = result.content.length !== currentContent.length;
-    if (preserveLength && hasSizeChange) {
-      patchResults.set(module.id, {
-        candidates: result.candidates,
-        patched: 0,
-        skipped: true,
-        reason: "requires size change",
-      });
-      continue;
-    }
+    const result = module.apply(currentContent, { preserveLength: false });
 
     currentContent = result.content;
     patchResults.set(module.id, {
@@ -1399,32 +1151,11 @@ function main() {
 
   if (opts.dryRun) {
     console.log("Dry run complete. No files changed.");
-    if (opts.codesign) {
-      console.log(`Would run: codesign -f -s ${opts.codesignIdentity} ${targetPath}`);
-    }
     process.exit(0);
-  }
-
-  if (!fs.existsSync(backupPath)) {
-    fs.copyFileSync(targetPath, backupPath);
-    console.log(`Backup created: ${backupPath}`);
   }
 
   fs.writeFileSync(targetPath, nextContent, TARGET_FILE_ENCODING);
   console.log(`Patched: ${targetPath}`);
-
-  if (opts.codesign) {
-    try {
-      runCodesign(targetPath, opts.codesignIdentity);
-      console.log(`Codesigned: ${targetPath} (identity: ${opts.codesignIdentity})`);
-    } catch (error) {
-      console.error(`Error: codesign failed for ${targetPath}: ${error.message}`);
-      process.exit(1);
-    }
-  } else if (looksLikeMachO(targetPath)) {
-    console.log("Note: target appears to be a Mach-O binary.");
-    console.log(`Run: codesign -f -s - ${targetPath}`);
-  }
 }
 
 main();

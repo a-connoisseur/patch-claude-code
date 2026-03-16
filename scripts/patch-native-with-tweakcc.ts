@@ -1,20 +1,37 @@
 #!/usr/bin/env node
 
-const fs = require("fs");
-const os = require("os");
-const path = require("path");
-const { execFileSync } = require("child_process");
+const fs = require("node:fs") as typeof import("node:fs");
+const os = require("node:os") as typeof import("node:os");
+const path = require("node:path") as typeof import("node:path");
+const { execFileSync } = require("node:child_process") as typeof import("node:child_process");
 
-function printHelp() {
-  console.log("Patch native Claude binaries via tweakcc API");
+type PatchOptions = {
+  input: string;
+  output: string;
+  disable: string[];
+  enable: string[];
+};
+
+type NativeInstallation = {
+  path: string;
+  kind: "native";
+};
+
+type TweakccModule = {
+  readContent(installation: NativeInstallation): Promise<string>;
+  writeContent(installation: NativeInstallation, content: string): Promise<void>;
+};
+
+function printHelp(): void {
+  console.log("Patch native Claude binaries via tweakcc");
   console.log("");
   console.log("Usage:");
   console.log(
-    "  node scripts/patch-native-with-tweakcc.js --input <native-binary> [--output <path>] [--disable <ids>] [--enable <ids>]"
+    "  node scripts/patch-native-with-tweakcc.ts --input <native-binary> [--output <path>] [--disable <ids>] [--enable <ids>]"
   );
 }
 
-function parsePatchIds(value, flagName) {
+function parsePatchIds(value: string, flagName: string): string[] {
   const ids = value
     .split(",")
     .map((id) => id.trim())
@@ -27,8 +44,8 @@ function parsePatchIds(value, flagName) {
   return ids;
 }
 
-function parseArgs(argv) {
-  const opts = {
+function parseArgs(argv: string[]): PatchOptions {
+  const opts: PatchOptions = {
     input: "",
     output: "",
     disable: [],
@@ -97,12 +114,21 @@ function parseArgs(argv) {
   return opts;
 }
 
-async function loadTweakcc() {
-  const mod = await import("tweakcc");
-  return mod.default && typeof mod.default === "object" ? { ...mod.default, ...mod } : mod;
+async function loadTweakcc(): Promise<TweakccModule> {
+  const imported = await import("tweakcc");
+  const merged =
+    imported.default && typeof imported.default === "object"
+      ? { ...imported.default, ...imported }
+      : imported;
+
+  if (typeof merged.readContent !== "function" || typeof merged.writeContent !== "function") {
+    throw new Error("Loaded tweakcc module does not expose readContent/writeContent API");
+  }
+
+  return merged as TweakccModule;
 }
 
-async function patchNativeBinary(opts) {
+async function patchNativeBinary(opts: PatchOptions): Promise<void> {
   const inputPath = path.resolve(opts.input);
   const outputPath = path.resolve(opts.output);
 
@@ -116,11 +142,7 @@ async function patchNativeBinary(opts) {
   }
 
   const tweakcc = await loadTweakcc();
-  if (typeof tweakcc.readContent !== "function" || typeof tweakcc.writeContent !== "function") {
-    throw new Error("Loaded tweakcc module does not expose readContent/writeContent API");
-  }
-
-  const installation = { path: outputPath, kind: "native" };
+  const installation: NativeInstallation = { path: outputPath, kind: "native" };
   const originalContent = await tweakcc.readContent(installation);
 
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "claude-native-patch-"));
@@ -148,14 +170,18 @@ async function patchNativeBinary(opts) {
   console.log(`Patched native binary via tweakcc: ${outputPath}`);
 }
 
-async function main() {
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+async function main(): Promise<void> {
   try {
     const opts = parseArgs(process.argv.slice(2));
     await patchNativeBinary(opts);
   } catch (error) {
-    console.error(`Error: ${error.message}`);
+    console.error(`Error: ${errorMessage(error)}`);
     process.exit(1);
   }
 }
 
-main();
+void main();
