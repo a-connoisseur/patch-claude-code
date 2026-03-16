@@ -149,7 +149,7 @@ async function patchNativeBinary(opts: PatchOptions): Promise<void> {
   const tempContentPath = path.join(tempDir, "content.js");
   fs.writeFileSync(tempContentPath, originalContent, "utf8");
 
-  const patcherPath = path.resolve(__dirname, "..", "patch-claude-display.js");
+  const patcherPath = path.resolve(__dirname, "..", "patch-claude-display.ts");
   const patchArgs = [patcherPath, "--file", tempContentPath];
 
   if (opts.enable.length > 0) {

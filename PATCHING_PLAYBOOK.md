@@ -6,7 +6,7 @@ This repo only supports the native `tweakcc` workflow.
 
 1. Start from Anthropic's native Claude binary.
 2. GitHub Actions runs `scripts/patch-native-with-tweakcc.ts`.
-3. The script extracts embedded JS, patches it with `patch-claude-display.js`, and writes it back.
+3. The script extracts embedded JS, patches it with `patch-claude-display.ts`, and writes it back.
 4. The workflow re-signs macOS binaries and publishes platform release artifacts.
 
 ## Commands
@@ -26,13 +26,13 @@ node scripts/patch-native-with-tweakcc.ts --input ./claude --output ./claude.pat
 Dry-run the extracted JS only:
 
 ```bash
-node patch-claude-display.js --file ./content.js --dry-run
+node patch-claude-display.ts --file ./content.js --dry-run
 ```
 
 List patch ids:
 
 ```bash
-node patch-claude-display.js --list-patches
+node patch-claude-display.ts --list-patches
 ```
 
 ## Active Patch Modules

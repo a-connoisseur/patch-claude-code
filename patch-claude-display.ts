@@ -9,7 +9,7 @@ function printHelp() {
   console.log("");
   console.log("Usage:");
   console.log(
-    "  node patch-claude-display.js --file <path> [--dry-run] [--disable <ids>] [--enable <ids>] [--list-patches]"
+    "  node patch-claude-display.ts --file <path> [--dry-run] [--disable <ids>] [--enable <ids>] [--list-patches]"
   );
   console.log("");
   console.log("Options:");
