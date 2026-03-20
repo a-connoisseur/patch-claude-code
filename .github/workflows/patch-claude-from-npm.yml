@@ -65,24 +65,57 @@ jobs:
 
           mkdir -p work
           NATIVE_HOME="$PWD/work/native-home-${{ matrix.release_suffix }}"
-          mkdir -p "$NATIVE_HOME"
+          INSTALL_SCRIPT="$PWD/work/install-native.sh"
+          MAX_ATTEMPTS=5
+          ATTEMPT=1
+          INSTALL_SUCCESS=false
+          NATIVE_BIN=""
 
-          curl -fsSL https://claude.ai/install.sh -o work/install-native.sh
-          chmod +x work/install-native.sh
+          while [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; do
+            echo "Native install attempt ${ATTEMPT}/${MAX_ATTEMPTS}"
+            rm -rf "$NATIVE_HOME"
+            mkdir -p "$NATIVE_HOME"
+            NATIVE_BIN=""
 
-          if [ -n "${{ github.event.inputs.native_version }}" ]; then
-            HOME="$NATIVE_HOME" bash work/install-native.sh "${{ github.event.inputs.native_version }}"
-          else
-            HOME="$NATIVE_HOME" bash work/install-native.sh
-          fi
+            if ! curl -fsSL https://claude.ai/install.sh -o "$INSTALL_SCRIPT"; then
+              echo "Failed to download native install script."
+            else
+              chmod +x "$INSTALL_SCRIPT"
 
-          NATIVE_BIN="$NATIVE_HOME/.local/bin/claude"
-          if [ ! -x "$NATIVE_BIN" ]; then
-            NATIVE_BIN="$(find "$NATIVE_HOME" -type f -name 'claude' -perm -111 | head -n1 || true)"
-          fi
+              INSTALL_EXIT=0
+              if [ -n "${{ github.event.inputs.native_version }}" ]; then
+                HOME="$NATIVE_HOME" bash "$INSTALL_SCRIPT" "${{ github.event.inputs.native_version }}" || INSTALL_EXIT=$?
+              else
+                HOME="$NATIVE_HOME" bash "$INSTALL_SCRIPT" || INSTALL_EXIT=$?
+              fi
 
-          if [ -z "$NATIVE_BIN" ] || [ ! -x "$NATIVE_BIN" ]; then
-            echo "Could not locate installed native claude binary."
+              if [ "$INSTALL_EXIT" -eq 0 ]; then
+                NATIVE_BIN="$NATIVE_HOME/.local/bin/claude"
+                if [ ! -x "$NATIVE_BIN" ]; then
+                  NATIVE_BIN="$(find "$NATIVE_HOME" -type f -name 'claude' -perm -111 | head -n1 || true)"
+                fi
+
+                if [ -n "$NATIVE_BIN" ] && [ -x "$NATIVE_BIN" ]; then
+                  INSTALL_SUCCESS=true
+                  break
+                fi
+
+                echo "Installer completed but native Claude binary was not found."
+              else
+                echo "Native installer exited with status $INSTALL_EXIT."
+              fi
+            fi
+
+            if [ "$ATTEMPT" -eq "$MAX_ATTEMPTS" ]; then
+              break
+            fi
+
+            ATTEMPT=$((ATTEMPT + 1))
+            sleep 5
+          done
+
+          if [ "$INSTALL_SUCCESS" != "true" ]; then
+            echo "Could not install native Claude after ${MAX_ATTEMPTS} attempts."
             find "$NATIVE_HOME" -maxdepth 6 -type f | head -n 200
             exit 1
           fi
