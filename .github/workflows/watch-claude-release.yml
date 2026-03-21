@@ -1,0 +1,95 @@
+name: Watch Claude Code Releases
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+
+concurrency:
+  group: watch-claude-release
+  cancel-in-progress: false
+
+jobs:
+  dispatch-patch:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Get latest Claude native version
+        id: latest
+        run: |
+          set -euo pipefail
+          INSTALL_SCRIPT="$(curl -fsSL https://claude.ai/install.sh)"
+          GCS_BUCKET="$(INSTALL_SCRIPT="$INSTALL_SCRIPT" python3 -c 'import os, re; match = re.search(r"^GCS_BUCKET=\"([^\"]+)\"$", os.environ["INSTALL_SCRIPT"], re.MULTILINE); print(match.group(1) if match else (_ for _ in ()).throw(SystemExit("Could not determine GCS_BUCKET from install script")))')"
+          VERSION="$(curl -fsSL "$GCS_BUCKET/latest")"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Latest native version: $VERSION"
+
+      - name: Skip if patch workflow is already running
+        id: active
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          ACTIVE_RUNS="$(gh run list \
+            --branch "$DEFAULT_BRANCH" \
+            --workflow patch-claude-from-npm.yml \
+            --limit 20 \
+            --json status \
+            --jq '[.[] | select(.status != "completed")] | length')"
+
+          if [ "$ACTIVE_RUNS" -gt 0 ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "Patch workflow already has an active run."
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check whether patched releases already exist
+        if: steps.active.outputs.skip != 'true'
+        id: releases
+        env:
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.latest.outputs.version }}
+        run: |
+          set -euo pipefail
+          MISSING=0
+
+          for SUFFIX in linux-x64 linux-arm64 macos-arm64; do
+            TAG="v${VERSION}-${SUFFIX}"
+            if gh release view "$TAG" > /dev/null 2>&1; then
+              echo "Found $TAG"
+            else
+              echo "Missing $TAG"
+              MISSING=1
+            fi
+          done
+
+          echo "missing=$MISSING" >> "$GITHUB_OUTPUT"
+
+      - name: Dispatch patch workflow
+        if: steps.active.outputs.skip != 'true' && steps.releases.outputs.missing == '1'
+        env:
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh workflow run patch-claude-from-npm.yml \
+            -f native_version="${{ steps.latest.outputs.version }}"
+          echo "Dispatched patch workflow for version ${{ steps.latest.outputs.version }}"
+
+      - name: No action needed
+        if: steps.active.outputs.skip == 'true' || steps.releases.outputs.missing != '1'
+        run: |
+          set -euo pipefail
+          if [ "${{ steps.active.outputs.skip }}" = "true" ]; then
+            echo "No action needed while patch workflow is already running."
+          else
+            echo "All platform releases already exist for ${{ steps.latest.outputs.version }}."
+          fi

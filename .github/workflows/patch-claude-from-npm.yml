@@ -1,8 +1,6 @@
 name: Patch Claude Native (tweakcc)
 
 on:
-  schedule:
-    - cron: "0 */2 * * *"
   workflow_dispatch:
     inputs:
       native_version:
