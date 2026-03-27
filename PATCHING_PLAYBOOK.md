@@ -63,15 +63,23 @@ These rules are not style preferences. They are what keeps the patcher alive acr
 - copies the input binary to the output path when patching out-of-place
 - loads `tweakcc`
 - extracts embedded JS with `readContent()`
+- if `tweakcc` fails on an ELF binary, falls back to `scripts/vendored-elf-native.ts`
 - writes that JS to a temp `content.js`
 - invokes `node patch-claude-display.ts --file <temp-content.js>`
 - reads the patched temp file back
 - writes it into the output binary with `writeContent()`
+- if `tweakcc` fails to repack an ELF binary, falls back to `scripts/vendored-elf-native.ts`
 
 Important behavior:
 
 - if `patch-claude-display.ts` prints nonzero patch counts, the binary written by `writeContent()` is patched
 - if `patch-claude-display.ts` makes no changes, the script still succeeds and the output binary can remain equivalent to upstream
+
+Linux note:
+
+- Claude native Linux builds changed format around 2.1.83 from the older Bun-at-EOF overlay layout to an ELF `.bun` section layout.
+- `tweakcc` 4.0.11 only handles the older ELF overlay path.
+- `scripts/vendored-elf-native.ts` exists specifically to keep latest Linux binaries patchable without waiting on upstream `tweakcc`.
 
 ## Current Patch Inventory
 

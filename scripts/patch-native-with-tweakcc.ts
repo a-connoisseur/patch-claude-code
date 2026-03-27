@@ -22,6 +22,12 @@ type TweakccModule = {
   writeContent(installation: NativeInstallation, content: string): Promise<void>;
 };
 
+type VendoredElfModule = {
+  canVendoredElfHandle(binaryPath: string): boolean;
+  readVendoredElfContent(binaryPath: string): string;
+  writeVendoredElfContent(binaryPath: string, content: string): void;
+};
+
 function printHelp(): void {
   console.log("Patch native Claude binaries via tweakcc");
   console.log("");
@@ -128,6 +134,10 @@ async function loadTweakcc(): Promise<TweakccModule> {
   return merged as TweakccModule;
 }
 
+function loadVendoredElfModule(): VendoredElfModule {
+  return require("./vendored-elf-native.ts") as VendoredElfModule;
+}
+
 async function patchNativeBinary(opts: PatchOptions): Promise<void> {
   const inputPath = path.resolve(opts.input);
   const outputPath = path.resolve(opts.output);
@@ -143,7 +153,27 @@ async function patchNativeBinary(opts: PatchOptions): Promise<void> {
 
   const tweakcc = await loadTweakcc();
   const installation: NativeInstallation = { path: outputPath, kind: "native" };
-  const originalContent = await tweakcc.readContent(installation);
+  let originalContent: string;
+  let writePatchedContent = async (patchedContent: string): Promise<void> => {
+    await tweakcc.writeContent(installation, patchedContent);
+  };
+
+  try {
+    originalContent = await tweakcc.readContent(installation);
+  } catch (readError) {
+    const vendoredElf = loadVendoredElfModule();
+    if (!vendoredElf.canVendoredElfHandle(outputPath)) {
+      throw readError;
+    }
+
+    console.warn(
+      `Warning: tweakcc could not extract JavaScript from ELF binary; falling back to vendored ELF handler for ${outputPath}`
+    );
+    originalContent = vendoredElf.readVendoredElfContent(outputPath);
+    writePatchedContent = async (patchedContent: string): Promise<void> => {
+      vendoredElf.writeVendoredElfContent(outputPath, patchedContent);
+    };
+  }
 
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "claude-native-patch-"));
   const tempContentPath = path.join(tempDir, "content.js");
@@ -162,7 +192,19 @@ async function patchNativeBinary(opts: PatchOptions): Promise<void> {
   try {
     execFileSync(process.execPath, patchArgs, { stdio: "inherit" });
     const patchedContent = fs.readFileSync(tempContentPath, "utf8");
-    await tweakcc.writeContent(installation, patchedContent);
+    try {
+      await writePatchedContent(patchedContent);
+    } catch (writeError) {
+      const vendoredElf = loadVendoredElfModule();
+      if (!vendoredElf.canVendoredElfHandle(outputPath)) {
+        throw writeError;
+      }
+
+      console.warn(
+        `Warning: tweakcc could not repack ELF binary; falling back to vendored ELF handler for ${outputPath}`
+      );
+      vendoredElf.writeVendoredElfContent(outputPath, patchedContent);
+    }
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
