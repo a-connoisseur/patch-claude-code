@@ -91,25 +91,25 @@ jobs:
           curl -fsSL "$GCS_BUCKET/$VERSION/manifest.json" -o "$MANIFEST_PATH"
 
           CHECKSUM="$(python3 - "$PLATFORM" "$MANIFEST_PATH" <<'PY'
-import json
-import sys
+          import json
+          import sys
 
-platform = sys.argv[1]
-manifest_path = sys.argv[2]
+          platform = sys.argv[1]
+          manifest_path = sys.argv[2]
 
-with open(manifest_path, encoding="utf-8") as handle:
-    manifest = json.load(handle)
+          with open(manifest_path, encoding="utf-8") as handle:
+              manifest = json.load(handle)
 
-platform_data = manifest.get("platforms", {}).get(platform)
-if not platform_data:
-    raise SystemExit(f"Platform {platform} not found in manifest")
+          platform_data = manifest.get("platforms", {}).get(platform)
+          if not platform_data:
+              raise SystemExit(f"Platform {platform} not found in manifest")
 
-checksum = platform_data.get("checksum")
-if not checksum:
-    raise SystemExit(f"Checksum missing for platform {platform}")
+          checksum = platform_data.get("checksum")
+          if not checksum:
+              raise SystemExit(f"Checksum missing for platform {platform}")
 
-print(checksum)
-PY
+          print(checksum)
+          PY
           )"
 
           NATIVE_BIN="work/claude.native.original"
