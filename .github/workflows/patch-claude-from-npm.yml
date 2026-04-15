@@ -62,68 +62,75 @@ jobs:
           set -euo pipefail
 
           mkdir -p work
-          NATIVE_HOME="$PWD/work/native-home-${{ matrix.release_suffix }}"
-          INSTALL_SCRIPT="$PWD/work/install-native.sh"
-          MAX_ATTEMPTS=5
-          ATTEMPT=1
-          INSTALL_SUCCESS=false
-          NATIVE_BIN=""
+          INSTALL_SCRIPT="$(curl -fsSL https://claude.ai/install.sh)"
+          GCS_BUCKET="$(INSTALL_SCRIPT="$INSTALL_SCRIPT" python3 -c 'import os, re; match = re.search(r"^GCS_BUCKET=\"([^\"]+)\"$", os.environ["INSTALL_SCRIPT"], re.MULTILINE); print(match.group(1) if match else (_ for _ in ()).throw(SystemExit("Could not determine GCS_BUCKET from install script")))')"
 
-          while [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; do
-            echo "Native install attempt ${ATTEMPT}/${MAX_ATTEMPTS}"
-            rm -rf "$NATIVE_HOME"
-            mkdir -p "$NATIVE_HOME"
-            NATIVE_BIN=""
+          case "${{ matrix.release_suffix }}" in
+            linux-x64)
+              PLATFORM="linux-x64"
+              ;;
+            linux-arm64)
+              PLATFORM="linux-arm64"
+              ;;
+            macos-arm64)
+              PLATFORM="darwin-arm64"
+              ;;
+            *)
+              echo "Unsupported release suffix: ${{ matrix.release_suffix }}"
+              exit 1
+              ;;
+          esac
 
-            if ! curl -fsSL https://claude.ai/install.sh -o "$INSTALL_SCRIPT"; then
-              echo "Failed to download native install script."
-            else
-              chmod +x "$INSTALL_SCRIPT"
+          if [ -n "${{ github.event.inputs.native_version }}" ]; then
+            VERSION="${{ github.event.inputs.native_version }}"
+          else
+            VERSION="$(curl -fsSL "$GCS_BUCKET/latest")"
+          fi
 
-              INSTALL_EXIT=0
-              if [ -n "${{ github.event.inputs.native_version }}" ]; then
-                HOME="$NATIVE_HOME" bash "$INSTALL_SCRIPT" "${{ github.event.inputs.native_version }}" || INSTALL_EXIT=$?
-              else
-                HOME="$NATIVE_HOME" bash "$INSTALL_SCRIPT" || INSTALL_EXIT=$?
-              fi
+          MANIFEST_PATH="work/manifest.json"
+          curl -fsSL "$GCS_BUCKET/$VERSION/manifest.json" -o "$MANIFEST_PATH"
 
-              if [ "$INSTALL_EXIT" -eq 0 ]; then
-                NATIVE_BIN="$NATIVE_HOME/.local/bin/claude"
-                if [ ! -x "$NATIVE_BIN" ]; then
-                  NATIVE_BIN="$(find "$NATIVE_HOME" -type f -name 'claude' -perm -111 | head -n1 || true)"
-                fi
+          CHECKSUM="$(python3 - "$PLATFORM" "$MANIFEST_PATH" <<'PY'
+import json
+import sys
 
-                if [ -n "$NATIVE_BIN" ] && [ -x "$NATIVE_BIN" ]; then
-                  INSTALL_SUCCESS=true
-                  break
-                fi
+platform = sys.argv[1]
+manifest_path = sys.argv[2]
 
-                echo "Installer completed but native Claude binary was not found."
-              else
-                echo "Native installer exited with status $INSTALL_EXIT."
-              fi
-            fi
+with open(manifest_path, encoding="utf-8") as handle:
+    manifest = json.load(handle)
 
-            if [ "$ATTEMPT" -eq "$MAX_ATTEMPTS" ]; then
-              break
-            fi
+platform_data = manifest.get("platforms", {}).get(platform)
+if not platform_data:
+    raise SystemExit(f"Platform {platform} not found in manifest")
 
-            ATTEMPT=$((ATTEMPT + 1))
-            sleep 5
-          done
+checksum = platform_data.get("checksum")
+if not checksum:
+    raise SystemExit(f"Checksum missing for platform {platform}")
 
-          if [ "$INSTALL_SUCCESS" != "true" ]; then
-            echo "Could not install native Claude after ${MAX_ATTEMPTS} attempts."
-            find "$NATIVE_HOME" -maxdepth 6 -type f | head -n 200
+print(checksum)
+PY
+          )"
+
+          NATIVE_BIN="work/claude.native.original"
+          curl -fsSL "$GCS_BUCKET/$VERSION/$PLATFORM/claude" -o "$NATIVE_BIN"
+          chmod +x "$NATIVE_BIN"
+
+          if [[ "${{ runner.os }}" == "macOS" ]]; then
+            ACTUAL_CHECKSUM="$(shasum -a 256 "$NATIVE_BIN" | awk '{print $1}')"
+          else
+            ACTUAL_CHECKSUM="$(sha256sum "$NATIVE_BIN" | awk '{print $1}')"
+          fi
+
+          if [ "$ACTUAL_CHECKSUM" != "$CHECKSUM" ]; then
+            echo "Checksum verification failed for $PLATFORM $VERSION"
+            echo "Expected: $CHECKSUM"
+            echo "Actual:   $ACTUAL_CHECKSUM"
             exit 1
           fi
 
-          VERSION="$($NATIVE_BIN --version | head -n1 | awk '{print $1}')"
           echo "path=$NATIVE_BIN" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-
-          cp "$NATIVE_BIN" work/claude.native.original
-          chmod +x work/claude.native.original
 
       - name: Check if platform release already exists
         id: check

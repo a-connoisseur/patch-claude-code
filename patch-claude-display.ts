@@ -453,6 +453,8 @@ function patchThinkingStreaming(content) {
   if (streamingVarMatch) {
     const streamingVar = streamingVarMatch[1];
     const createElementCallPattern = /createElement\(([A-Za-z_$][\w$]*),\{([^{}]*?)\}\)/g;
+    const promptRendererCallPattern =
+      /createElement\(([A-Za-z_$][\w$]*),\{([\s\S]{0,2000}?placeholderElement:[\s\S]{0,2000}?agentDefinitions:[^}]*?onOpenRateLimitOptions:[^}]*?isLoading:)([^,}]+)(,streamingText:[^}]*?showThinkingHint:[^}]*?isBriefOnly:[^}]*?)\}\)/g;
 
     output = output.replace(createElementCallPattern, (full, component, props) => {
       if (!props.includes("streamingToolUses:")) {
@@ -482,6 +484,23 @@ function patchThinkingStreaming(content) {
       }
       return full;
     });
+
+    output = output.replace(
+      promptRendererCallPattern,
+      (full, component, beforeIsLoadingValue, isLoadingValue, afterIsLoadingValue) => {
+        if (full.includes("streamingThinking:")) {
+          return full;
+        }
+
+        propCandidates += 1;
+        const replacement = `createElement(${component},{${beforeIsLoadingValue}${isLoadingValue},streamingThinking:${streamingVar}${afterIsLoadingValue}})`;
+        if (replacement !== full) {
+          propPatched += 1;
+          return replacement;
+        }
+        return full;
+      }
+    );
   }
 
   candidates += propCandidates;
@@ -532,6 +551,13 @@ function patchThinkingStreaming(content) {
     lingerPatched += 1;
     return `let ${visibleVar}=!!(${streamVar}&&${streamVar}.isStreaming)`;
   });
+  const promptLingerPattern =
+    /([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\.useMemo\(\(\)=>\{if\(!([A-Za-z_$][\w$]*)\)return!1;if\(\3\.isStreaming\)return!0;if\(\3\.streamingEndedAt\)return Date\.now\(\)-\3\.streamingEndedAt<30000;return!1\},\[\3\]\)/g;
+  output = output.replace(promptLingerPattern, (_full, visibleVar, reactNs, streamVar) => {
+    lingerCandidates += 1;
+    lingerPatched += 1;
+    return `${visibleVar}=${reactNs}.useMemo(()=>!!(${streamVar}&&${streamVar}.isStreaming),[${streamVar}])`;
+  });
   candidates += lingerCandidates;
   patched += lingerPatched;
 
@@ -548,6 +574,16 @@ function patchThinkingStreaming(content) {
       liveRowCandidates += 1;
       liveRowPatched += 1;
       return `${resultVar}=${thinkingVar}?.isStreaming&&${thinkingVar}?.thinking&&${reactNs}.createElement(m,{marginTop:1},${reactNs}.createElement(${component},{param:{type:"thinking",thinking:${thinkingVar}.thinking},addMargin:!1,isTranscriptMode:!0,verbose:${verboseVar},hideInTranscript:!1}))`;
+    }
+  );
+  const promptLiveThinkingRowPattern =
+    /([A-Za-z_$][\w$]*)&&([A-Za-z_$][\w$]*)&&![A-Za-z_$][\w$]*&&([A-Za-z_$][\w$]*)\.createElement\(m,\{marginTop:1\},\3\.createElement\(([A-Za-z_$][\w$]*),\{param:\{type:"thinking",thinking:\2\.thinking\},addMargin:!1,isTranscriptMode:!0,verbose:([A-Za-z_$][\w$]*),hideInTranscript:!1\}\)\)/g;
+  output = output.replace(
+    promptLiveThinkingRowPattern,
+    (_full, _activeVar, thinkingVar, reactNs, component, verboseVar) => {
+      liveRowCandidates += 1;
+      liveRowPatched += 1;
+      return `${thinkingVar}?.isStreaming&&${thinkingVar}?.thinking&&${reactNs}.createElement(m,{marginTop:1},${reactNs}.createElement(${component},{param:{type:"thinking",thinking:${thinkingVar}.thinking},addMargin:!1,isTranscriptMode:!0,verbose:${verboseVar},hideInTranscript:!1}))`;
     }
   );
   candidates += liveRowCandidates;
