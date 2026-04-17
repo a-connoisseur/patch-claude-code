@@ -582,6 +582,35 @@ function patchThinkingStreaming(content) {
   candidates += propCandidates;
   patched += propPatched;
 
+  // Newer builds can enable thinking without actually requesting
+  // summarized display text. In that case the UI only gets signature-only
+  // thinking blocks and falls back to the placeholder hint row. Default the
+  // request display mode to "summarized" when upstream leaves it unset.
+  let displayCandidates = 0;
+  let displayPatched = 0;
+  const thinkingDisplayPattern =
+    /([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\.type!=="disabled"&&!VH\(process\.env\.CLAUDE_CODE_DISABLE_THINKING\),([A-Za-z_$][\w$]*)=\1\?\2\.display\?\?void 0:void 0,([A-Za-z_$][\w$]*)=void 0;/g;
+  output = output.replace(
+    thinkingDisplayPattern,
+    (full, enabledVar, thinkingConfigVar, displayVar, requestVar) => {
+      displayCandidates += 1;
+      if (full.includes('display??"summarized"')) {
+        return full;
+      }
+
+      const replacement =
+        `${enabledVar}=${thinkingConfigVar}.type!=="disabled"&&!VH(process.env.CLAUDE_CODE_DISABLE_THINKING),` +
+        `${displayVar}=${enabledVar}?${thinkingConfigVar}.display??"summarized":void 0,${requestVar}=void 0;`;
+      if (replacement !== full) {
+        displayPatched += 1;
+        return replacement;
+      }
+      return full;
+    }
+  );
+  candidates += displayCandidates;
+  patched += displayPatched;
+
   let redactedSummaryCandidates = 0;
   let redactedSummaryPatched = 0;
   const assistantThinkingPattern =
