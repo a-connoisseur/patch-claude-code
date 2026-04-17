@@ -66,11 +66,18 @@ jobs:
             VERSION_ARGS=(--version "${{ github.event.inputs.native_version }}")
           fi
 
-          bash scripts/download-native-from-installer.sh \
-            --platform "${{ matrix.release_suffix }}" \
-            --output work/claude.native.original \
-            --manifest-out work/manifest.json \
-            "${VERSION_ARGS[@]}"
+          if [ "${#VERSION_ARGS[@]}" -gt 0 ]; then
+            bash scripts/download-native-from-installer.sh \
+              --platform "${{ matrix.release_suffix }}" \
+              --output work/claude.native.original \
+              --manifest-out work/manifest.json \
+              "${VERSION_ARGS[@]}"
+          else
+            bash scripts/download-native-from-installer.sh \
+              --platform "${{ matrix.release_suffix }}" \
+              --output work/claude.native.original \
+              --manifest-out work/manifest.json
+          fi
 
       - name: Check if platform release already exists
         id: check
