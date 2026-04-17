@@ -17,6 +17,7 @@ This repo does not rebuild Claude Code from source. It patches the embedded JS b
 The current flow is:
 
 1. Download or locate a native Claude binary.
+   Use `bash scripts/download-native-from-installer.sh` when you want the exact upstream native download path used by CI.
 2. Use `tweakcc.readContent()` to extract the embedded JS bundle.
 3. Write that bundle to a temporary `content.js` file.
 4. Run `patch-claude-display.ts` against that extracted JS.
@@ -29,6 +30,7 @@ The important consequence: almost all real behavior lives in `patch-claude-displ
 ## Important Files
 
 - `patch-claude-display.ts`: ordered patch pipeline for extracted bundle text
+- `scripts/download-native-from-installer.sh`: exact upstream binary download flow via Anthropic's installer bucket
 - `scripts/patch-native-with-tweakcc.ts`: native binary read/write flow via `tweakcc`
 - `.github/workflows/patch-claude-from-npm.yml`: CI download, patch, sign, release path
 - `install-patched-claude.sh`: installer that resolves release tags and downloads patched assets

@@ -61,76 +61,16 @@ jobs:
         run: |
           set -euo pipefail
 
-          mkdir -p work
-          INSTALL_SCRIPT="$(curl -fsSL https://claude.ai/install.sh)"
-          GCS_BUCKET="$(INSTALL_SCRIPT="$INSTALL_SCRIPT" python3 -c 'import os, re; match = re.search(r"^GCS_BUCKET=\"([^\"]+)\"$", os.environ["INSTALL_SCRIPT"], re.MULTILINE); print(match.group(1) if match else (_ for _ in ()).throw(SystemExit("Could not determine GCS_BUCKET from install script")))')"
-
-          case "${{ matrix.release_suffix }}" in
-            linux-x64)
-              PLATFORM="linux-x64"
-              ;;
-            linux-arm64)
-              PLATFORM="linux-arm64"
-              ;;
-            macos-arm64)
-              PLATFORM="darwin-arm64"
-              ;;
-            *)
-              echo "Unsupported release suffix: ${{ matrix.release_suffix }}"
-              exit 1
-              ;;
-          esac
-
+          VERSION_ARGS=()
           if [ -n "${{ github.event.inputs.native_version }}" ]; then
-            VERSION="${{ github.event.inputs.native_version }}"
-          else
-            VERSION="$(curl -fsSL "$GCS_BUCKET/latest")"
+            VERSION_ARGS=(--version "${{ github.event.inputs.native_version }}")
           fi
 
-          MANIFEST_PATH="work/manifest.json"
-          curl -fsSL "$GCS_BUCKET/$VERSION/manifest.json" -o "$MANIFEST_PATH"
-
-          CHECKSUM="$(python3 - "$PLATFORM" "$MANIFEST_PATH" <<'PY'
-          import json
-          import sys
-
-          platform = sys.argv[1]
-          manifest_path = sys.argv[2]
-
-          with open(manifest_path, encoding="utf-8") as handle:
-              manifest = json.load(handle)
-
-          platform_data = manifest.get("platforms", {}).get(platform)
-          if not platform_data:
-              raise SystemExit(f"Platform {platform} not found in manifest")
-
-          checksum = platform_data.get("checksum")
-          if not checksum:
-              raise SystemExit(f"Checksum missing for platform {platform}")
-
-          print(checksum)
-          PY
-          )"
-
-          NATIVE_BIN="work/claude.native.original"
-          curl -fsSL "$GCS_BUCKET/$VERSION/$PLATFORM/claude" -o "$NATIVE_BIN"
-          chmod +x "$NATIVE_BIN"
-
-          if [[ "${{ runner.os }}" == "macOS" ]]; then
-            ACTUAL_CHECKSUM="$(shasum -a 256 "$NATIVE_BIN" | awk '{print $1}')"
-          else
-            ACTUAL_CHECKSUM="$(sha256sum "$NATIVE_BIN" | awk '{print $1}')"
-          fi
-
-          if [ "$ACTUAL_CHECKSUM" != "$CHECKSUM" ]; then
-            echo "Checksum verification failed for $PLATFORM $VERSION"
-            echo "Expected: $CHECKSUM"
-            echo "Actual:   $ACTUAL_CHECKSUM"
-            exit 1
-          fi
-
-          echo "path=$NATIVE_BIN" >> "$GITHUB_OUTPUT"
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          bash scripts/download-native-from-installer.sh \
+            --platform "${{ matrix.release_suffix }}" \
+            --output work/claude.native.original \
+            --manifest-out work/manifest.json \
+            "${VERSION_ARGS[@]}"
 
       - name: Check if platform release already exists
         id: check

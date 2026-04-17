@@ -415,6 +415,82 @@ function patchThinkingCase(content, ctx = {}) {
   };
 }
 
+function patchRedactedThinkingSummaries(content) {
+  const redactedNeedle = 'case"redacted_thinking":';
+  const thinkingNeedle = 'case"thinking":';
+  const maxRendererGap = 2000;
+
+  let index = 0;
+  let candidates = 0;
+  let patched = 0;
+  let output = content;
+
+  while (true) {
+    const redactedStart = output.indexOf(redactedNeedle, index);
+    if (redactedStart === -1) {
+      break;
+    }
+
+    const thinkingStart = output.indexOf(thinkingNeedle, redactedStart + redactedNeedle.length);
+    if (thinkingStart === -1) {
+      break;
+    }
+
+    const nextCase = output.indexOf('case"', thinkingStart + thinkingNeedle.length);
+    const nextDefault = output.indexOf("default:", thinkingStart + thinkingNeedle.length);
+    const endCandidates = [nextCase, nextDefault].filter((value) => value !== -1);
+    const thinkingEnd = endCandidates.length > 0 ? Math.min(...endCandidates) : output.length;
+
+    const redactedSegment = output.slice(redactedStart, thinkingStart);
+    const thinkingSegment = output.slice(thinkingStart, thinkingEnd);
+
+    if (
+      thinkingStart - redactedStart > maxRendererGap ||
+      thinkingEnd - thinkingStart > maxRendererGap ||
+      !redactedSegment.includes("createElement(") ||
+      !thinkingSegment.includes("hideInTranscript:")
+    ) {
+      index = redactedStart + redactedNeedle.length;
+      continue;
+    }
+
+    const thinkingRendererMatch = thinkingSegment.match(
+      /([A-Za-z_$][\w$]*)\.createElement\(([A-Za-z_$][\w$]*),\{addMargin:([A-Za-z_$][\w$]*),param:([A-Za-z_$][\w$]*),isTranscriptMode:[^,}]+,verbose:[^,}]+,hideInTranscript:[^}]+\}\)/
+    );
+    if (!thinkingRendererMatch) {
+      index = redactedStart + redactedNeedle.length;
+      continue;
+    }
+
+    const reactNs = thinkingRendererMatch[1];
+    const thinkingComponent = thinkingRendererMatch[2];
+    const addMarginVar = thinkingRendererMatch[3];
+    const paramVar = thinkingRendererMatch[4];
+
+    candidates += 1;
+
+    const replacement =
+      `case"redacted_thinking":return ${reactNs}.createElement(${thinkingComponent},{` +
+      `addMargin:${addMarginVar},param:{type:"thinking",thinking:${paramVar}.data??""},` +
+      `isTranscriptMode:!0,verbose:!0,hideInTranscript:!1})`;
+
+    if (redactedSegment !== replacement) {
+      output = output.slice(0, redactedStart) + replacement + output.slice(thinkingStart);
+      patched += 1;
+      index = redactedStart + replacement.length + thinkingNeedle.length;
+      continue;
+    }
+
+    index = redactedStart + redactedNeedle.length;
+  }
+
+  return {
+    content: output,
+    candidates,
+    patched,
+  };
+}
+
 function patchThinkingStreaming(content) {
   let output = content;
   let candidates = 0;
@@ -505,6 +581,21 @@ function patchThinkingStreaming(content) {
 
   candidates += propCandidates;
   patched += propPatched;
+
+  let redactedSummaryCandidates = 0;
+  let redactedSummaryPatched = 0;
+  const assistantThinkingPattern =
+    /let ([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\.message\.content\.find\(\(([A-Za-z_$][\w$]*)\)=>\3\.type==="thinking"\);if\(\1&&\1\.type==="thinking"\)([A-Za-z_$][\w$]*)\?\.\(\(\)=>\(\{thinking:\1\.thinking,isStreaming:!1,streamingEndedAt:Date\.now\(\)\}\)\)/g;
+  output = output.replace(
+    assistantThinkingPattern,
+    (_full, blockVar, messageVar, itemVar, setStreamingVar) => {
+      redactedSummaryCandidates += 1;
+      redactedSummaryPatched += 1;
+      return `let ${blockVar}=${messageVar}.message.content.find((${itemVar})=>${itemVar}.type==="thinking"||${itemVar}.type==="redacted_thinking");if(${blockVar}&&(${blockVar}.type==="thinking"||${blockVar}.type==="redacted_thinking"))${setStreamingVar}?.(()=>({thinking:${blockVar}.type==="thinking"?${blockVar}.thinking:${blockVar}.data??"",isStreaming:!1,streamingEndedAt:Date.now()}))`;
+    }
+  );
+  candidates += redactedSummaryCandidates;
+  patched += redactedSummaryPatched;
 
   // Disable memo wrapper around message-row renderer. Match by comparator body
   // shape (screen/columns/lastThinkingBlockId checks), not by minified symbol
@@ -623,7 +714,7 @@ function patchThinkingStreaming(content) {
           const messageStopAfter = `if(${eventParam}.event.type==="message_stop"){${setStreamingThinkingParam}?.(null),${setModeParam}("tool-use"),${setStreamingToolsParam}(()=>[]);return}`;
 
           const thinkingStartBefore = `case"thinking":case"redacted_thinking":${setModeParam}("thinking");return;`;
-          const thinkingStartAfter = `case"thinking":case"redacted_thinking":${setStreamingThinkingParam}?.(()=>({thinking:"",isStreaming:!0,streamingEndedAt:void 0})),${setModeParam}("thinking");return;`;
+          const thinkingStartAfter = `case"thinking":case"redacted_thinking":${setStreamingThinkingParam}?.(()=>({thinking:${eventParam}.event.content_block.type==="redacted_thinking"?${eventParam}.event.content_block.data??"":"",isStreaming:!0,streamingEndedAt:void 0})),${setModeParam}("thinking");return;`;
 
           const textStartBefore = `case"text":${setModeParam}("responding");return;`;
           const textStartAfter = `case"text":${setStreamingThinkingParam}?.(null),${setModeParam}("responding");return;`;
@@ -1035,6 +1126,11 @@ const PATCH_MODULES = [
     id: "thinking-inline",
     description: "Always render thinking blocks inline",
     apply: patchThinkingCase,
+  },
+  {
+    id: "redacted-thinking-inline",
+    description: "Render redacted thinking summaries inline as thinking text",
+    apply: patchRedactedThinkingSummaries,
   },
   {
     id: "thinking-streaming",
