@@ -7,6 +7,10 @@ on:
         description: "Optional native installer version (for example: 2.1.59). Leave empty for latest."
         required: false
         default: ""
+      tag_name:
+        description: "Optional release tag override. Use {version} and/or {platform}; if {platform} is omitted, -<platform> is appended."
+        required: false
+        default: ""
       force:
         description: "Force patch/release even if base platform release exists (uses suffix tags like vX-linux-x64-2)."
         required: false
@@ -83,14 +87,27 @@ jobs:
         id: check
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG_NAME_INPUT: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag_name || '' }}
           FORCE_RELEASE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.force || 'false' }}
         run: |
           set -euo pipefail
 
           VERSION="${{ steps.native.outputs.version }}"
-          BASE_TAG="v${VERSION}-${{ matrix.release_suffix }}"
+          PLATFORM_SUFFIX="${{ matrix.release_suffix }}"
+          BASE_TAG="v${VERSION}-${PLATFORM_SUFFIX}"
+
+          if [ -n "$TAG_NAME_INPUT" ]; then
+            BASE_TAG="${TAG_NAME_INPUT//\{version\}/$VERSION}"
+
+            if [[ "$BASE_TAG" == *"{platform}"* ]]; then
+              BASE_TAG="${BASE_TAG//\{platform\}/$PLATFORM_SUFFIX}"
+            elif [[ "$BASE_TAG" != *"-$PLATFORM_SUFFIX" ]]; then
+              BASE_TAG="${BASE_TAG}-$PLATFORM_SUFFIX"
+            fi
+          fi
+
           TAG="$BASE_TAG"
-          TITLE="claude-code native ${VERSION} (${{ matrix.release_suffix }})"
+          TITLE="claude-code native ${VERSION} (${PLATFORM_SUFFIX})"
 
           if gh release view "$BASE_TAG" > /dev/null 2>&1; then
             if [ "$FORCE_RELEASE" = "true" ]; then
