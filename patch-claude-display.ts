@@ -470,9 +470,9 @@ function patchRedactedThinkingSummaries(content) {
     candidates += 1;
 
     const replacement =
-      `case"redacted_thinking":return ${reactNs}.createElement(${thinkingComponent},{` +
+      `case"redacted_thinking":{return ${reactNs}.createElement(${thinkingComponent},{` +
       `addMargin:${addMarginVar},param:{type:"thinking",thinking:${paramVar}.data??""},` +
-      `isTranscriptMode:!0,verbose:!0,hideInTranscript:!1})`;
+      `isTranscriptMode:!0,verbose:!0,hideInTranscript:!1})}`;
 
     if (redactedSegment !== replacement) {
       output = output.slice(0, redactedStart) + replacement + output.slice(thinkingStart);
