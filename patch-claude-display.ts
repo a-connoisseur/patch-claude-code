@@ -589,17 +589,17 @@ function patchThinkingStreaming(content) {
   let displayCandidates = 0;
   let displayPatched = 0;
   const thinkingDisplayPattern =
-    /([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\.type!=="disabled"&&!VH\(process\.env\.CLAUDE_CODE_DISABLE_THINKING\),([A-Za-z_$][\w$]*)=\1\?\2\.display\?\?void 0:void 0,([A-Za-z_$][\w$]*)=void 0;/g;
+    /([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\.type!=="disabled"&&!([A-Za-z_$][\w$]*)\(process\.env\.CLAUDE_CODE_DISABLE_THINKING\),([A-Za-z_$][\w$]*)=\1\?\2\.display(?:\?\?void 0)?:void 0,([A-Za-z_$][\w$]*)=void 0;/g;
   output = output.replace(
     thinkingDisplayPattern,
-    (full, enabledVar, thinkingConfigVar, displayVar, requestVar) => {
+    (full, enabledVar, thinkingConfigVar, envFlagHelper, displayVar, requestVar) => {
       displayCandidates += 1;
       if (full.includes('display??"summarized"')) {
         return full;
       }
 
       const replacement =
-        `${enabledVar}=${thinkingConfigVar}.type!=="disabled"&&!VH(process.env.CLAUDE_CODE_DISABLE_THINKING),` +
+        `${enabledVar}=${thinkingConfigVar}.type!=="disabled"&&!${envFlagHelper}(process.env.CLAUDE_CODE_DISABLE_THINKING),` +
         `${displayVar}=${enabledVar}?${thinkingConfigVar}.display??"summarized":void 0,${requestVar}=void 0;`;
       if (replacement !== full) {
         displayPatched += 1;
@@ -681,33 +681,60 @@ function patchThinkingStreaming(content) {
   candidates += lingerCandidates;
   patched += lingerPatched;
 
-  // Some builds suppress the live thinking row in brief mode even when
-  // `streamingThinking` is present. Match the dedicated PL1 live-row shape
-  // and render it whenever streamed thinking text exists.
+  const transcriptToolUseHelpersMatch = output.match(
+    /let [A-Za-z_$][\w$]*=([A-Za-z_$][\w$]*)\(\{content:\[[A-Za-z_$][\w$]*\.contentBlock\]\}\);return [A-Za-z_$][\w$]*\.uuid=([A-Za-z_$][\w$]*)\([A-Za-z_$][\w$]*\.contentBlock\.id,0\),([A-Za-z_$][\w$]*)\(\[[A-Za-z_$][\w$]*\]\)/
+  );
+  let createVirtualMessageHelper = transcriptToolUseHelpersMatch?.[1] ?? null;
+  const transcriptStreamingThinkingMatch = output.match(
+    /streamingToolUses:[A-Za-z_$][\w$]*,[^}]*streamingThinking:([A-Za-z_$][\w$]*),streamingText:/
+  );
+  const transcriptStreamingThinkingVar = transcriptStreamingThinkingMatch?.[1];
+  if (transcriptStreamingThinkingVar) {
+    let inlineThinkingCandidates = 0;
+    let inlineThinkingPatched = 0;
+    const inlineThinkingPattern =
+      /([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\.useMemo\(\(\)=>([A-Za-z_$][\w$]*)\.flatMap\(\(([A-Za-z_$][\w$]*)\)=>\{let ([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\(\{content:\[\4\.contentBlock\]\}\);return \5\.uuid=([A-Za-z_$][\w$]*)\(\4\.contentBlock\.id,0\),([A-Za-z_$][\w$]*)\(\[\5\]\)\}\),\[\3\]\)/g;
+    output = output.replace(
+      inlineThinkingPattern,
+      (
+        _full,
+        extrasVar,
+        reactNs,
+        streamingToolUsesVar,
+        toolUseEntryVar,
+        toolUseMessageVar,
+        createMessageHelper,
+        createUUIDHelper,
+        normalizeMessagesHelper
+      ) => {
+        inlineThinkingCandidates += 1;
+        inlineThinkingPatched += 1;
+        createVirtualMessageHelper = createMessageHelper;
+        return `${extrasVar}=${reactNs}.useMemo(()=>{let __cc_streamingToolUseExtras=${streamingToolUsesVar}.map((${toolUseEntryVar})=>{let ${toolUseMessageVar}=${createMessageHelper}({content:[${toolUseEntryVar}.contentBlock]});return ${toolUseMessageVar}.uuid=${createUUIDHelper}(${toolUseEntryVar}.contentBlock.id,0),{index:${toolUseEntryVar}.index??9007199254740991,messages:${normalizeMessagesHelper}([${toolUseMessageVar}])}}),__cc_streamingThinkingExtras=(${transcriptStreamingThinkingVar}?.messages??[]).map((__cc_entry,__cc_index)=>({index:__cc_entry.index??9007199254740991+__cc_index,messages:${normalizeMessagesHelper}([__cc_entry.message??__cc_entry])}));return[...__cc_streamingToolUseExtras,...__cc_streamingThinkingExtras].sort((__cc_a,__cc_b)=>__cc_a.index===__cc_b.index?0:__cc_a.index-__cc_b.index).flatMap((__cc_entry)=>__cc_entry.messages)},[${streamingToolUsesVar},${transcriptStreamingThinkingVar}])`;
+      }
+    );
+    candidates += inlineThinkingCandidates;
+    patched += inlineThinkingPatched;
+  }
+
+  // The dedicated live thinking row sits outside the message flow, so when the
+  // inline transcript extras are active it becomes a duplicate copy pinned at
+  // the bottom. Suppress that extra row and keep streamed thinking inline.
   let liveRowCandidates = 0;
   let liveRowPatched = 0;
   const liveThinkingRowPattern =
-    /([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)&&([A-Za-z_$][\w$]*)&&![A-Za-z_$][\w$]*&&([A-Za-z_$][\w$]*)\.createElement\(m,\{marginTop:1\},\4\.createElement\(([A-Za-z_$][\w$]*),\{param:\{type:"thinking",thinking:\3\.thinking\},addMargin:!1,isTranscriptMode:!0,verbose:([A-Za-z_$][\w$]*),hideInTranscript:!1\}\)\)/g;
-  output = output.replace(
-    liveThinkingRowPattern,
-    (_full, resultVar, _activeVar, thinkingVar, reactNs, component, verboseVar) => {
-      liveRowCandidates += 1;
-      liveRowPatched += 1;
-      return `${resultVar}=${thinkingVar}?.isStreaming&&${thinkingVar}?.thinking&&${reactNs}.createElement(m,{marginTop:1},${reactNs}.createElement(${component},{param:{type:"thinking",thinking:${thinkingVar}.thinking},addMargin:!1,isTranscriptMode:!0,verbose:${verboseVar},hideInTranscript:!1}))`;
-    }
-  );
-  const promptLiveThinkingRowPattern =
-    /([A-Za-z_$][\w$]*)&&([A-Za-z_$][\w$]*)&&![A-Za-z_$][\w$]*&&([A-Za-z_$][\w$]*)\.createElement\(m,\{marginTop:1\},\3\.createElement\(([A-Za-z_$][\w$]*),\{param:\{type:"thinking",thinking:\2\.thinking\},addMargin:!1,isTranscriptMode:!0,verbose:([A-Za-z_$][\w$]*),hideInTranscript:!1\}\)\)/g;
-  output = output.replace(
-    promptLiveThinkingRowPattern,
-    (_full, _activeVar, thinkingVar, reactNs, component, verboseVar) => {
-      liveRowCandidates += 1;
-      liveRowPatched += 1;
-      return `${thinkingVar}?.isStreaming&&${thinkingVar}?.thinking&&${reactNs}.createElement(m,{marginTop:1},${reactNs}.createElement(${component},{param:{type:"thinking",thinking:${thinkingVar}.thinking},addMargin:!1,isTranscriptMode:!0,verbose:${verboseVar},hideInTranscript:!1}))`;
-    }
-  );
+    /([A-Za-z_$][\w$]*)&{2}([A-Za-z_$][\w$]*)&{2}!([A-Za-z_$][\w$]*)&{2}([A-Za-z_$][\w$]*)\.createElement\(m,\{marginTop:1\},\4\.createElement\(([A-Za-z_$][\w$]*),\{param:\{type:"thinking",thinking:\2\.thinking\},addMargin:!1,isTranscriptMode:!0,verbose:([A-Za-z_$][\w$]*),hideInTranscript:!1\}\)\)/g;
+  output = output.replace(liveThinkingRowPattern, (_full) => {
+    liveRowCandidates += 1;
+    liveRowPatched += 1;
+    return "null";
+  });
   candidates += liveRowCandidates;
   patched += liveRowPatched;
+
+  // Instead, the renderer materializes virtual thinking messages from
+  // `streamingThinking.messages` inline with the other live transcript extras,
+  // and the reducer patch below keeps that state in sync as blocks stream.
 
   // Ensure streaming thinking state is reset and updated from thinking deltas.
   // Without this, some builds keep stale previous-turn thinking and only show
@@ -740,29 +767,38 @@ function patchThinkingStreaming(content) {
           const requestStartAfter = `if(${eventParam}.type==="stream_request_start"){${setStreamingThinkingParam}?.(null),${setModeParam}("requesting");return}`;
 
           const messageStopBefore = `if(${eventParam}.event.type==="message_stop"){${setModeParam}("tool-use"),${setStreamingToolsParam}(()=>[]);return}`;
-          const messageStopAfter = `if(${eventParam}.event.type==="message_stop"){${setStreamingThinkingParam}?.(null),${setModeParam}("tool-use"),${setStreamingToolsParam}(()=>[]);return}`;
+          const messageStopAfter = `if(${eventParam}.event.type==="message_stop"){${setStreamingThinkingParam}?.((__cc_prevStreamingThinking)=>__cc_prevStreamingThinking?{...__cc_prevStreamingThinking,isStreaming:!1,streamingEndedAt:Date.now(),currentIndex:null,currentMessage:null}:__cc_prevStreamingThinking),${setModeParam}("tool-use"),${setStreamingToolsParam}(()=>[]);return}`;
 
           const thinkingStartBefore = `case"thinking":case"redacted_thinking":${setModeParam}("thinking");return;`;
-          const thinkingStartAfter = `case"thinking":case"redacted_thinking":${setStreamingThinkingParam}?.(()=>({thinking:${eventParam}.event.content_block.type==="redacted_thinking"?${eventParam}.event.content_block.data??"":"",isStreaming:!0,streamingEndedAt:void 0})),${setModeParam}("thinking");return;`;
+          const thinkingStartAfter =
+            createVirtualMessageHelper === null
+              ? null
+              : `case"thinking":case"redacted_thinking":${setStreamingThinkingParam}?.((__cc_prevStreamingThinking)=>{let __cc_streamingThinkingMessage=${createVirtualMessageHelper}({content:[${eventParam}.event.content_block.type==="redacted_thinking"?{type:"redacted_thinking",data:${eventParam}.event.content_block.data??""}:{type:"thinking",thinking:""}],isVirtual:!0});return{thinking:${eventParam}.event.content_block.type==="redacted_thinking"?${eventParam}.event.content_block.data??"":"",isStreaming:!0,streamingEndedAt:void 0,currentIndex:${eventParam}.event.index,currentMessage:__cc_streamingThinkingMessage,messages:[...(__cc_prevStreamingThinking?.messages??[]),{index:${eventParam}.event.index,message:__cc_streamingThinkingMessage}]}}),${setModeParam}("thinking");return;`;
 
           const textStartBefore = `case"text":${setModeParam}("responding");return;`;
-          const textStartAfter = `case"text":${setStreamingThinkingParam}?.(null),${setModeParam}("responding");return;`;
+          const textStartAfter = `case"text":${setStreamingThinkingParam}?.((__cc_prevStreamingThinking)=>__cc_prevStreamingThinking?{...__cc_prevStreamingThinking,isStreaming:!1,streamingEndedAt:void 0,currentIndex:null,currentMessage:null}:__cc_prevStreamingThinking),${setModeParam}("responding");return;`;
 
           const messageDeltaBefore = `case"message_delta":${setModeParam}("responding");return;`;
-          const messageDeltaAfter = `case"message_delta":${setStreamingThinkingParam}?.(null),${setModeParam}("responding");return;`;
+          const messageDeltaAfter = `case"message_delta":${setStreamingThinkingParam}?.((__cc_prevStreamingThinking)=>__cc_prevStreamingThinking?{...__cc_prevStreamingThinking,isStreaming:!1,streamingEndedAt:void 0,currentIndex:null,currentMessage:null}:__cc_prevStreamingThinking),${setModeParam}("responding");return;`;
 
-          const thinkingStateParam = "__cc_prevStreamingThinking";
           const thinkingDeltaBefore = `case"thinking_delta":${appendOutputParam}(${eventParam}.event.delta.thinking);return;`;
-          const thinkingDeltaAfter = `case"thinking_delta":${appendOutputParam}(${eventParam}.event.delta.thinking),${setStreamingThinkingParam}?.((${thinkingStateParam})=>({thinking:(${thinkingStateParam}?.thinking??"")+${eventParam}.event.delta.thinking,isStreaming:!0,streamingEndedAt:void 0}));return;`;
+          const thinkingDeltaAfter =
+            createVirtualMessageHelper === null
+              ? null
+              : `case"thinking_delta":{${appendOutputParam}(${eventParam}.event.delta.thinking);${setStreamingThinkingParam}?.((__cc_prevStreamingThinking)=>{let __cc_nextStreamingThinkingText=(__cc_prevStreamingThinking?.thinking??"")+${eventParam}.event.delta.thinking,__cc_nextStreamingThinkingIndex=__cc_prevStreamingThinking?.currentIndex??${eventParam}.event.index,__cc_nextStreamingThinkingMessage=${createVirtualMessageHelper}({content:[{type:"thinking",thinking:__cc_nextStreamingThinkingText}],isVirtual:!0}),__cc_replacedStreamingThinkingMessage=!1,__cc_nextStreamingThinkingMessages=(__cc_prevStreamingThinking?.messages??[]).map((__cc_entry)=>__cc_entry.index===__cc_nextStreamingThinkingIndex?(__cc_replacedStreamingThinkingMessage=!0,{...__cc_entry,message:__cc_nextStreamingThinkingMessage}):__cc_entry);if(!__cc_replacedStreamingThinkingMessage)__cc_nextStreamingThinkingMessages=[...__cc_nextStreamingThinkingMessages,{index:__cc_nextStreamingThinkingIndex,message:__cc_nextStreamingThinkingMessage}];return __cc_prevStreamingThinking?{...__cc_prevStreamingThinking,thinking:__cc_nextStreamingThinkingText,isStreaming:!0,streamingEndedAt:void 0,currentIndex:__cc_nextStreamingThinkingIndex,currentMessage:__cc_nextStreamingThinkingMessage,messages:__cc_nextStreamingThinkingMessages}:{thinking:__cc_nextStreamingThinkingText,isStreaming:!0,streamingEndedAt:void 0,currentIndex:${eventParam}.event.index,currentMessage:__cc_nextStreamingThinkingMessage,messages:[{index:${eventParam}.event.index,message:__cc_nextStreamingThinkingMessage}]}});return;}`;
 
           const wg6Replacements = [
             [requestStartBefore, requestStartAfter],
             [messageStopBefore, messageStopAfter],
-            [thinkingStartBefore, thinkingStartAfter],
             [textStartBefore, textStartAfter],
             [messageDeltaBefore, messageDeltaAfter],
-            [thinkingDeltaBefore, thinkingDeltaAfter],
           ];
+          if (thinkingStartAfter !== null) {
+            wg6Replacements.splice(2, 0, [thinkingStartBefore, thinkingStartAfter]);
+          }
+          if (thinkingDeltaAfter !== null) {
+            wg6Replacements.push([thinkingDeltaBefore, thinkingDeltaAfter]);
+          }
 
           let nextWg6Segment = wg6Segment;
           for (const [before, after] of wg6Replacements) {

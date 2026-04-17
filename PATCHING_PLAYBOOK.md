@@ -214,8 +214,8 @@ Sub-fixes currently bundled here:
 - prop threading fix: add missing `streamingThinking:` prop to the main renderer when the surrounding prop bag clearly represents the conversation view
 - memo removal: disable one memo wrapper around the message-row renderer when its comparator shape references screen/columns/lastThinkingBlockId/streamingToolUseIDs and suppresses updates
 - linger fix: replace the "remain visible for 30 seconds after stream end" path with `isStreaming` only
-- live-row fix: force the PL1 live thinking row to render whenever streamed thinking text exists
-- reducer/event fix: update the stream event handler so `stream_request_start`, `thinking`, `thinking_delta`, `text`, `message_delta`, and `message_stop` reset or update streaming thinking state correctly
+- inline extras fix: materialize `streamingThinking.messages` in the transcript extras list, ordered alongside streaming tool-use blocks by content-block index
+- reducer/event fix: update the stream event handler so `stream_request_start`, `thinking`, `thinking_delta`, `text`, `message_delta`, and `message_stop` keep per-block streaming thinking state in sync without relying on footer-row rendering
 
 Old bundle shapes we match:
 
@@ -232,6 +232,7 @@ Likely break signs:
 - thinking only appears after the assistant finishes
 - previous turn's thinking leaks into the next turn
 - live thinking vanishes in brief mode
+- live thinking pins itself to the bottom of the transcript instead of staying above the later streamed text/tool blocks
 - patch count drops partially rather than fully; this often means only one of the sub-fixes drifted
 
 ### `subagent-prompt`

@@ -158,18 +158,26 @@ parse_args() {
   done
 }
 
-extract_bucket() {
+extract_download_base_url() {
   local install_script="$1"
 
   INSTALL_SCRIPT="$install_script" python3 -c '
 import os
 import re
 
-match = re.search(r"^GCS_BUCKET=\"([^\"]+)\"$", os.environ["INSTALL_SCRIPT"], re.MULTILINE)
-if not match:
-    raise SystemExit("Could not determine GCS_BUCKET from install script")
+script = os.environ["INSTALL_SCRIPT"]
+patterns = [
+    r"^DOWNLOAD_BASE_URL=\"([^\"]+)\"$",
+    r"^GCS_BUCKET=\"([^\"]+)\"$",
+]
 
-print(match.group(1))
+for pattern in patterns:
+    match = re.search(pattern, script, re.MULTILINE)
+    if match:
+        print(match.group(1))
+        raise SystemExit(0)
+
+raise SystemExit("Could not determine download base URL from install script")
 '
 }
 
@@ -204,23 +212,23 @@ main() {
   require_cmd curl
   require_cmd python3
 
-  local platform install_script gcs_bucket expected_checksum actual_checksum
+  local platform install_script download_base_url expected_checksum actual_checksum
   platform="$(normalize_platform "$PLATFORM")"
 
   mkdir -p "$(dirname "$OUTPUT_PATH")"
   mkdir -p "$(dirname "$MANIFEST_PATH")"
 
   install_script="$(curl -fsSL https://claude.ai/install.sh)"
-  gcs_bucket="$(extract_bucket "$install_script")"
+  download_base_url="$(extract_download_base_url "$install_script")"
 
   if [[ -z "$VERSION" ]]; then
-    VERSION="$(curl -fsSL "$gcs_bucket/latest")"
+    VERSION="$(curl -fsSL "$download_base_url/latest")"
   fi
 
-  curl -fsSL "$gcs_bucket/$VERSION/manifest.json" -o "$MANIFEST_PATH"
+  curl -fsSL "$download_base_url/$VERSION/manifest.json" -o "$MANIFEST_PATH"
   expected_checksum="$(read_manifest_checksum "$platform" "$MANIFEST_PATH")"
 
-  curl -fsSL "$gcs_bucket/$VERSION/$platform/claude" -o "$OUTPUT_PATH"
+  curl -fsSL "$download_base_url/$VERSION/$platform/claude" -o "$OUTPUT_PATH"
   chmod +x "$OUTPUT_PATH"
 
   actual_checksum="$(sha256_file "$OUTPUT_PATH")"
