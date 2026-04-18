@@ -18,15 +18,22 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Get latest Claude native version
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+
+      - name: Get latest Claude version from npm
         id: latest
         run: |
           set -euo pipefail
-          INSTALL_SCRIPT="$(curl -fsSL https://claude.ai/install.sh)"
-          GCS_BUCKET="$(INSTALL_SCRIPT="$INSTALL_SCRIPT" python3 -c 'import os, re; match = re.search(r"^GCS_BUCKET=\"([^\"]+)\"$", os.environ["INSTALL_SCRIPT"], re.MULTILINE); print(match.group(1) if match else (_ for _ in ()).throw(SystemExit("Could not determine GCS_BUCKET from install script")))')"
-          VERSION="$(curl -fsSL "$GCS_BUCKET/latest")"
+          VERSION="$(npm view @anthropic-ai/claude-code dist-tags.latest --silent)"
+          if [ -z "$VERSION" ]; then
+            echo "npm did not return a Claude version" >&2
+            exit 1
+          fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "Latest native version: $VERSION"
+          echo "Latest Claude version: $VERSION"
 
       - name: Skip if patch workflow is already running
         id: active
