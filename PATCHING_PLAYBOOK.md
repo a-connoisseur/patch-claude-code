@@ -222,6 +222,8 @@ Old bundle shapes we match:
 - memoized renderer logic near `hidePastThinking:!0,streamingThinking:<var>`
 - a comparator function body checking `.screen!==`, `.columns!==`, `.lastThinkingBlockId`, `.streamingToolUseIDs`
 - event handling logic near `type!=="stream_event"&&`, `type==="stream_request_start"`, and `case"thinking_delta"`
+- older reducers called a helper inside `case"thinking_delta":<helper>(event.delta.thinking);return;`
+- 2.1.116-style reducers can also use a bare `case"thinking_delta":return;`, which means the live thinking state patch must no longer rely on that helper call existing
 
 Why this exists:
 

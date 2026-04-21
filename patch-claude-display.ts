@@ -782,10 +782,17 @@ function patchThinkingStreaming(content) {
           const messageDeltaAfter = `case"message_delta":${setStreamingThinkingParam}?.((__cc_prevStreamingThinking)=>__cc_prevStreamingThinking?{...__cc_prevStreamingThinking,isStreaming:!1,streamingEndedAt:void 0,currentIndex:null,currentMessage:null}:__cc_prevStreamingThinking),${setModeParam}("responding");return;`;
 
           const thinkingDeltaBefore = `case"thinking_delta":${appendOutputParam}(${eventParam}.event.delta.thinking);return;`;
-          const thinkingDeltaAfter =
+          const thinkingDeltaBareBefore = `case"thinking_delta":return;`;
+          const thinkingDeltaBody =
             createVirtualMessageHelper === null
               ? null
-              : `case"thinking_delta":{${appendOutputParam}(${eventParam}.event.delta.thinking);${setStreamingThinkingParam}?.((__cc_prevStreamingThinking)=>{let __cc_nextStreamingThinkingText=(__cc_prevStreamingThinking?.thinking??"")+${eventParam}.event.delta.thinking,__cc_nextStreamingThinkingIndex=__cc_prevStreamingThinking?.currentIndex??${eventParam}.event.index,__cc_nextStreamingThinkingMessage=${createVirtualMessageHelper}({content:[{type:"thinking",thinking:__cc_nextStreamingThinkingText}],isVirtual:!0}),__cc_replacedStreamingThinkingMessage=!1,__cc_nextStreamingThinkingMessages=(__cc_prevStreamingThinking?.messages??[]).map((__cc_entry)=>__cc_entry.index===__cc_nextStreamingThinkingIndex?(__cc_replacedStreamingThinkingMessage=!0,{...__cc_entry,message:__cc_nextStreamingThinkingMessage}):__cc_entry);if(!__cc_replacedStreamingThinkingMessage)__cc_nextStreamingThinkingMessages=[...__cc_nextStreamingThinkingMessages,{index:__cc_nextStreamingThinkingIndex,message:__cc_nextStreamingThinkingMessage}];return __cc_prevStreamingThinking?{...__cc_prevStreamingThinking,thinking:__cc_nextStreamingThinkingText,isStreaming:!0,streamingEndedAt:void 0,currentIndex:__cc_nextStreamingThinkingIndex,currentMessage:__cc_nextStreamingThinkingMessage,messages:__cc_nextStreamingThinkingMessages}:{thinking:__cc_nextStreamingThinkingText,isStreaming:!0,streamingEndedAt:void 0,currentIndex:${eventParam}.event.index,currentMessage:__cc_nextStreamingThinkingMessage,messages:[{index:${eventParam}.event.index,message:__cc_nextStreamingThinkingMessage}]}});return;}`;
+              : `${setStreamingThinkingParam}?.((__cc_prevStreamingThinking)=>{let __cc_nextStreamingThinkingText=(__cc_prevStreamingThinking?.thinking??"")+${eventParam}.event.delta.thinking,__cc_nextStreamingThinkingIndex=__cc_prevStreamingThinking?.currentIndex??${eventParam}.event.index,__cc_nextStreamingThinkingMessage=${createVirtualMessageHelper}({content:[{type:"thinking",thinking:__cc_nextStreamingThinkingText}],isVirtual:!0}),__cc_replacedStreamingThinkingMessage=!1,__cc_nextStreamingThinkingMessages=(__cc_prevStreamingThinking?.messages??[]).map((__cc_entry)=>__cc_entry.index===__cc_nextStreamingThinkingIndex?(__cc_replacedStreamingThinkingMessage=!0,{...__cc_entry,message:__cc_nextStreamingThinkingMessage}):__cc_entry);if(!__cc_replacedStreamingThinkingMessage)__cc_nextStreamingThinkingMessages=[...__cc_nextStreamingThinkingMessages,{index:__cc_nextStreamingThinkingIndex,message:__cc_nextStreamingThinkingMessage}];return __cc_prevStreamingThinking?{...__cc_prevStreamingThinking,thinking:__cc_nextStreamingThinkingText,isStreaming:!0,streamingEndedAt:void 0,currentIndex:__cc_nextStreamingThinkingIndex,currentMessage:__cc_nextStreamingThinkingMessage,messages:__cc_nextStreamingThinkingMessages}:{thinking:__cc_nextStreamingThinkingText,isStreaming:!0,streamingEndedAt:void 0,currentIndex:${eventParam}.event.index,currentMessage:__cc_nextStreamingThinkingMessage,messages:[{index:${eventParam}.event.index,message:__cc_nextStreamingThinkingMessage}]}});`;
+          const thinkingDeltaAfter =
+            thinkingDeltaBody === null
+              ? null
+              : `case"thinking_delta":{${appendOutputParam}(${eventParam}.event.delta.thinking);${thinkingDeltaBody}return;}`;
+          const thinkingDeltaBareAfter =
+            thinkingDeltaBody === null ? null : `case"thinking_delta":{${thinkingDeltaBody}return;}`;
 
           const wg6Replacements = [
             [requestStartBefore, requestStartAfter],
@@ -798,6 +805,9 @@ function patchThinkingStreaming(content) {
           }
           if (thinkingDeltaAfter !== null) {
             wg6Replacements.push([thinkingDeltaBefore, thinkingDeltaAfter]);
+          }
+          if (thinkingDeltaBareAfter !== null) {
+            wg6Replacements.push([thinkingDeltaBareBefore, thinkingDeltaBareAfter]);
           }
 
           let nextWg6Segment = wg6Segment;
