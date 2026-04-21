@@ -225,6 +225,7 @@ Old bundle shapes we match:
 - event handling logic near `type!=="stream_event"&&`, `type==="stream_request_start"`, and `case"thinking_delta"`
 - older reducers called a helper inside `case"thinking_delta":<helper>(event.delta.thinking);return;`
 - 2.1.116-style reducers can also use a bare `case"thinking_delta":return;`, which means the live thinking state patch must no longer rely on that helper call existing
+- current main-screen renderer shapes can carry `placeholderElement:` and `streamingText:` but omit `showThinkingHint:`, so the prop-threading matcher must not depend on that prop being present before injecting `streamingThinking:`
 
 Why this exists:
 
