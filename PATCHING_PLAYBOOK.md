@@ -82,6 +82,7 @@ Linux note:
 - Claude native Linux builds changed format around 2.1.83 from the older Bun-at-EOF overlay layout to an ELF `.bun` section layout.
 - `tweakcc` 4.0.11 only handles the older ELF overlay path.
 - `scripts/vendored-elf-native.ts` exists specifically to keep latest Linux binaries patchable without waiting on upstream `tweakcc`.
+- For section-backed ELF binaries, `.bun` sits right before the ELF section-header table. Growing `.bun` content must move `e_shoff` forward and grow the containing `LOAD` segment; updating the section bytes alone overwrites section headers, detaches `.bun` from the segment table, and can produce runtime crashes on Linux x64.
 
 ## Current Patch Inventory
 

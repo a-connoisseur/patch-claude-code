@@ -520,6 +520,180 @@ function readVendoredElfContent(binaryPath: string): string {
   return findClaudeModuleContent(storage).toString("utf8");
 }
 
+function findContainingLoadSegment(
+  binary: import("node-lief").ELF.Binary,
+  section: import("node-lief").Section
+): import("node-lief").ELF.Segment | null {
+  const sectionFileOffset = Number(section.fileOffset);
+  const sectionVirtualAddress = Number(section.virtualAddress);
+  const sectionSize = Number(section.size);
+  const sectionFileEnd = sectionFileOffset + sectionSize;
+  const sectionVirtualEnd = sectionVirtualAddress + sectionSize;
+
+  for (const segment of binary.segments()) {
+    if (segment.type !== "LOAD") {
+      continue;
+    }
+
+    const segmentFileOffset = Number(segment.fileOffset);
+    const segmentFileEnd = segmentFileOffset + Number(segment.fileSize);
+    const segmentVirtualAddress = Number(segment.virtualAddress);
+    const segmentVirtualEnd = segmentVirtualAddress + Number(segment.virtualSize);
+
+    const containsFileRange =
+      segmentFileOffset <= sectionFileOffset && sectionFileEnd <= segmentFileEnd;
+    const containsVirtualRange =
+      segmentVirtualAddress <= sectionVirtualAddress && sectionVirtualEnd <= segmentVirtualEnd;
+
+    if (containsFileRange && containsVirtualRange) {
+      return segment;
+    }
+  }
+
+  return null;
+}
+
+function readElf64Layout(
+  binaryBytes: Buffer,
+  binaryPath: string
+): {
+  programHeaderOffset: number;
+  programHeaderEntrySize: number;
+  programHeaderCount: number;
+  sectionHeaderOffset: number;
+  sectionHeaderEntrySize: number;
+  sectionHeaderCount: number;
+} {
+  if (binaryBytes.length < 64) {
+    throw new Error(`ELF binary is too small: ${binaryPath}`);
+  }
+
+  if (!binaryBytes.subarray(0, 4).equals(Buffer.from([0x7f, 0x45, 0x4c, 0x46]))) {
+    throw new Error(`ELF magic header missing: ${binaryPath}`);
+  }
+
+  const elfClass = binaryBytes.readUInt8(4);
+  const elfData = binaryBytes.readUInt8(5);
+
+  if (elfClass !== 2) {
+    throw new Error(`Only ELF64 section-backed binaries are supported: ${binaryPath}`);
+  }
+
+  if (elfData !== 1) {
+    throw new Error(`Only little-endian ELF section-backed binaries are supported: ${binaryPath}`);
+  }
+
+  return {
+    programHeaderOffset: Number(binaryBytes.readBigUInt64LE(32)),
+    sectionHeaderOffset: Number(binaryBytes.readBigUInt64LE(40)),
+    programHeaderEntrySize: binaryBytes.readUInt16LE(54),
+    programHeaderCount: binaryBytes.readUInt16LE(56),
+    sectionHeaderEntrySize: binaryBytes.readUInt16LE(58),
+    sectionHeaderCount: binaryBytes.readUInt16LE(60),
+  };
+}
+
+function writeBufferPreservingMode(path: string, content: Buffer): void {
+  const tempPath = `${path}.tmp`;
+  fs.writeFileSync(tempPath, content);
+  const originalMode = fs.statSync(path).mode;
+  fs.chmodSync(tempPath, originalMode);
+
+  try {
+    fs.renameSync(tempPath, path);
+  } catch (error) {
+    try {
+      if (fs.existsSync(tempPath)) {
+        fs.unlinkSync(tempPath);
+      }
+    } catch {
+      // Best-effort cleanup only.
+    }
+
+    throw error;
+  }
+}
+
+function writeSectionBackedElfContent(
+  binaryPath: string,
+  binary: import("node-lief").ELF.Binary,
+  bunSection: import("node-lief").Section,
+  wrappedSectionData: Buffer,
+  containingSegment: import("node-lief").ELF.Segment | null
+): void {
+  const originalBytes = fs.readFileSync(binaryPath);
+  const layout = readElf64Layout(originalBytes, binaryPath);
+  const bunSectionOffset = Number(bunSection.fileOffset);
+  const originalSectionSize = Number(bunSection.size);
+  const bunSectionEnd = bunSectionOffset + originalSectionSize;
+
+  const laterSectionExists = binary.sections().some((section) => {
+    if (section.name === ".bun") {
+      return false;
+    }
+
+    return Number(section.fileOffset) >= bunSectionEnd;
+  });
+
+  if (laterSectionExists) {
+    throw new Error(`.bun is not the last ELF section payload in ${binaryPath}`);
+  }
+
+  const bunSectionIndex = binary.sections().findIndex((section) => section.name === ".bun");
+  if (bunSectionIndex === -1) {
+    throw new Error(`.bun section index not found in ELF binary: ${binaryPath}`);
+  }
+
+  if (bunSectionIndex >= layout.sectionHeaderCount) {
+    throw new Error(`.bun section index is out of range in ELF header table: ${binaryPath}`);
+  }
+
+  const growthBytes = Math.max(0, wrappedSectionData.length - originalSectionSize);
+  const nextSectionHeaderOffset = layout.sectionHeaderOffset + growthBytes;
+  const nextBytes = Buffer.alloc(originalBytes.length + growthBytes);
+
+  originalBytes.copy(nextBytes, 0, 0, layout.sectionHeaderOffset);
+  originalBytes.copy(nextBytes, nextSectionHeaderOffset, layout.sectionHeaderOffset);
+
+  wrappedSectionData.copy(nextBytes, bunSectionOffset);
+  nextBytes.fill(0, bunSectionOffset + wrappedSectionData.length, nextSectionHeaderOffset);
+
+  nextBytes.writeBigUInt64LE(BigInt(nextSectionHeaderOffset), 40);
+
+  const bunSectionHeaderOffset = nextSectionHeaderOffset + bunSectionIndex * layout.sectionHeaderEntrySize;
+  nextBytes.writeBigUInt64LE(BigInt(wrappedSectionData.length), bunSectionHeaderOffset + 32);
+
+  if (containingSegment) {
+    const containingSegmentIndex = binary.segments().findIndex((segment) => {
+      return (
+        segment.type === containingSegment.type &&
+        Number(segment.fileOffset) === Number(containingSegment.fileOffset) &&
+        Number(segment.fileSize) === Number(containingSegment.fileSize) &&
+        Number(segment.virtualAddress) === Number(containingSegment.virtualAddress) &&
+        Number(segment.virtualSize) === Number(containingSegment.virtualSize)
+      );
+    });
+
+    if (containingSegmentIndex === -1) {
+      throw new Error(`Containing LOAD segment index not found in ELF binary: ${binaryPath}`);
+    }
+
+    if (containingSegmentIndex >= layout.programHeaderCount) {
+      throw new Error(`Containing LOAD segment index is out of range in ELF header table: ${binaryPath}`);
+    }
+
+    const segmentHeaderOffset =
+      layout.programHeaderOffset + containingSegmentIndex * layout.programHeaderEntrySize;
+    const nextFileSize = Number(containingSegment.fileSize) + growthBytes;
+    const nextVirtualSize = Number(containingSegment.virtualSize) + growthBytes;
+
+    nextBytes.writeBigUInt64LE(BigInt(nextFileSize), segmentHeaderOffset + 32);
+    nextBytes.writeBigUInt64LE(BigInt(nextVirtualSize), segmentHeaderOffset + 40);
+  }
+
+  writeBufferPreservingMode(binaryPath, nextBytes);
+}
+
 function writeVendoredElfContent(binaryPath: string, content: string): void {
   const { binary } = parseElfBinary(binaryPath);
   const storage = parseElfBunStorage(binary);
@@ -535,11 +709,9 @@ function writeVendoredElfContent(binaryPath: string, content: string): void {
     if (!bunSection) {
       throw new Error(`.bun section not found in ELF binary: ${binaryPath}`);
     }
-
+    const containingSegment = findContainingLoadSegment(binary, bunSection);
     const wrappedSectionData = wrapSectionBunData(rebuiltBunData, storage.sectionHeaderSize);
-    bunSection.content = wrappedSectionData;
-    bunSection.size = BigInt(wrappedSectionData.length);
-    writeBinaryPreservingMode(binary, binaryPath);
+    writeSectionBackedElfContent(binaryPath, binary, bunSection, wrappedSectionData, containingSegment);
     return;
   }
 
