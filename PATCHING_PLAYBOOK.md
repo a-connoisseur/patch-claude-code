@@ -216,6 +216,7 @@ Sub-fixes currently bundled here:
 - memo removal: disable one memo wrapper around the message-row renderer when its comparator shape references screen/columns/lastThinkingBlockId/streamingToolUseIDs and suppresses updates
 - linger fix: replace the "remain visible for 30 seconds after stream end" path with `isStreaming` only
 - inline extras fix: materialize `streamingThinking.messages` in the transcript extras list, ordered alongside streaming tool-use blocks by content-block index
+- bottom-row suppressor: remove the separate live-thinking row that sits outside the main message flow so streaming thinking only renders inline once
 - reducer/event fix: update the stream event handler so `stream_request_start`, `thinking`, `thinking_delta`, `text`, `message_delta`, and `message_stop` keep per-block streaming thinking state in sync without relying on footer-row rendering
 
 Old bundle shapes we match:
@@ -226,6 +227,7 @@ Old bundle shapes we match:
 - older reducers called a helper inside `case"thinking_delta":<helper>(event.delta.thinking);return;`
 - 2.1.116-style reducers can also use a bare `case"thinking_delta":return;`, which means the live thinking state patch must no longer rely on that helper call existing
 - current main-screen renderer shapes can carry `placeholderElement:` and `streamingText:` but omit `showThinkingHint:`, so the prop-threading matcher must not depend on that prop being present before injecting `streamingThinking:`
+- the duplicate live-thinking suppressor should match the semantic row shape around `param:{type:"thinking",thinking:<var>.thinking}` and the surrounding `marginTop:1` wrapper, not a specific wrapper component identifier
 
 Why this exists:
 
@@ -236,6 +238,7 @@ Likely break signs:
 - thinking only appears after the assistant finishes
 - previous turn's thinking leaks into the next turn
 - live thinking vanishes in brief mode
+- live streaming shows two thinking blocks at once
 - live thinking pins itself to the bottom of the transcript instead of staying above the later streamed text/tool blocks
 - patch count drops partially rather than fully; this often means only one of the sub-fixes drifted
 

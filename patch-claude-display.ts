@@ -723,7 +723,7 @@ function patchThinkingStreaming(content) {
   let liveRowCandidates = 0;
   let liveRowPatched = 0;
   const liveThinkingRowPattern =
-    /([A-Za-z_$][\w$]*)&{2}([A-Za-z_$][\w$]*)&{2}!([A-Za-z_$][\w$]*)&{2}([A-Za-z_$][\w$]*)\.createElement\(m,\{marginTop:1\},\4\.createElement\(([A-Za-z_$][\w$]*),\{param:\{type:"thinking",thinking:\2\.thinking\},addMargin:!1,isTranscriptMode:!0,verbose:([A-Za-z_$][\w$]*),hideInTranscript:!1\}\)\)/g;
+    /([A-Za-z_$][\w$]*)&{2}([A-Za-z_$][\w$]*)&{2}!([A-Za-z_$][\w$]*)&{2}([A-Za-z_$][\w$]*)\.createElement\(([A-Za-z_$][\w$]*),\{marginTop:1\},\4\.createElement\(([A-Za-z_$][\w$]*),\{param:\{type:"thinking",thinking:\2\.thinking\},addMargin:!1,isTranscriptMode:!0,verbose:([A-Za-z_$][\w$]*),hideInTranscript:!1\}\)\)/g;
   output = output.replace(liveThinkingRowPattern, (_full) => {
     liveRowCandidates += 1;
     liveRowPatched += 1;
