@@ -1,4 +1,4 @@
-name: Patch Claude Native (tweakcc)
+name: Patch Claude Native
 
 on:
   workflow_dispatch:
