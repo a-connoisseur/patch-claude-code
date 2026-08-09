@@ -1317,6 +1317,42 @@ function patchThinkingStreaming(content) {
   };
 }
 
+function patchAnswerStreaming(content) {
+  let candidates = 0;
+  let patched = 0;
+
+  // The live assistant-answer preview (raw text_delta accumulation -> throttled
+  // store -> bottom-of-transcript streaming row) is fully wired upstream but the
+  // whole path is gated on one animation flag:
+  //   sk = !(state.settings.prefersReducedMotion ?? !1) && !isWindowsTerminal()
+  // That flag gates the delta-apply callback, the preview-visible flag, and
+  // deferMessages. Force the reduced-motion factor to true at the definition so
+  // answers stream even with prefersReducedMotion enabled; keep the Windows
+  // Terminal guard intact. Anchor on the adjacent peek/clear/apply throttle
+  // callback so only the streaming-text gate matches.
+  const gatePattern =
+    /=!\(([A-Za-z_$][\w$]*)\(\(([A-Za-z_$][\w$]*)\)=>\2\.settings\.prefersReducedMotion\)\?\?!1\)&&(![A-Za-z_$][\w$]*\(\))(,[A-Za-z_$][\w$]*=[A-Za-z_$][\w$]*\.useCallback\(\(([A-Za-z_$][\w$]*)\)=>\{if\(!([A-Za-z_$][\w$]*)\)\{if\(\5\(([A-Za-z_$][\w$]*)\.peek\(\)\)===null\)\7\.clear\(\);return\}\7\.apply\(\5\)\})/g;
+
+  const output = content.replace(
+    gatePattern,
+    (full, _storeHook, _stateParam, terminalGuard, rest) => {
+      candidates += 1;
+      const replacement = `=!0&&${terminalGuard}${rest}`;
+      if (replacement !== full) {
+        patched += 1;
+        return replacement;
+      }
+      return full;
+    }
+  );
+
+  return {
+    content: output,
+    candidates,
+    patched,
+  };
+}
+
 function patchSubagentPromptVisibility(content, ctx = {}) {
   const backgroundedAnchor = '"Backgrounded agent"';
   const livePromptMountPattern =
@@ -1730,6 +1766,11 @@ const PATCH_MODULES = [
     id: "thinking-streaming",
     description: "Enable/repair streaming thinking behavior",
     apply: patchThinkingStreaming,
+  },
+  {
+    id: "answer-streaming",
+    description: "Stream assistant answer text even with reduced motion enabled",
+    apply: patchAnswerStreaming,
   },
   {
     id: "subagent-prompt",

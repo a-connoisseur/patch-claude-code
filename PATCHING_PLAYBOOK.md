@@ -296,6 +296,38 @@ Likely break signs:
 - patch count drops partially rather than fully; this often means only one of the sub-fixes drifted
 - patch count still looks nonzero but live thinking is broken; check whether the reducer/event fix actually touched the stream-event handler, not just renderer prop threading or final assistant-message summary paths
 
+### `answer-streaming`
+
+Intent:
+
+- stream the assistant's answer text live even when `prefersReducedMotion` is enabled in settings
+
+Background:
+
+- upstream 2.1.226 already ships a complete answer-streaming pipeline: the stream reducer accumulates `text_delta` into `onStreamingText` (capped at 1e6 chars), a throttled buffer flushes into an external store every 100ms, and a preview component renders the accumulated markdown at the bottom of the message list while loading
+- the entire path is gated on a single flag computed once in the app component: `sk = !(settings.prefersReducedMotion ?? !1) && !isWindowsTerminal()`
+- that flag gates three things: the delta-apply callback (deltas are dropped when false), the preview-visible flag, and `deferMessages`
+- with `prefersReducedMotion: true`, answers only appear after the message lands, while patched streaming thinking still works because its state path never consults this flag
+
+Old bundle shape we match:
+
+- the gate definition immediately followed by the throttle callback: `=!(<hook>((<s>)=><s>.settings.prefersReducedMotion)??!1)&&!<wtGuard>(),<cb>=<React>.useCallback((<u>)=>{if(!<sk>){if(<u>(<buf>.peek())===null)<buf>.clear();return}<buf>.apply(<u>)})`
+- the peek/clear/apply throttle shape is unique in the bundle, so it pins the match to the streaming-text gate and not the other `prefersReducedMotion` reads (voice recording animation, spinner shimmer), which stay untouched
+
+What we rewrite:
+
+- replace the reduced-motion factor with `!0`, producing `=!0&&!<wtGuard>()`
+- the Windows Terminal guard (`WT_SESSION`) is deliberately preserved
+
+Why this exists:
+
+- the user runs with `prefersReducedMotion: true` for other reasons and still wants live answer text
+
+Likely break signs:
+
+- answers appear all at once again while thinking still streams
+- candidate count drops to `0`; check whether upstream renamed `prefersReducedMotion`, changed the `??!1` default, or restructured the throttle callback next to the gate
+
 ### `subagent-prompt`
 
 Intent:
