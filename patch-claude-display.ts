@@ -671,6 +671,35 @@ function patchThinkingStreaming(content) {
       return full;
     }
   );
+  // 2.1.226 splits the env-flag read into its own variable and gates the
+  // request display mode behind firstParty + interleaved-thinking checks:
+  //   ii=flag(env.CLAUDE_CODE_DISABLE_THINKING),di=cfg.type!=="disabled"&&!ii,
+  //   vr=di&&B1()&&Xkn(model)?cfg.display:void 0,Gr=void 0;
+  // cfg.display is normally unset, so the API never streams thinking display
+  // text and live thinking only appears when the message lands. Default it to
+  // "summarized" and drop the extra gates, matching the older display patch.
+  const thinkingDisplaySplitPattern =
+    /([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\(process\.env\.CLAUDE_CODE_DISABLE_THINKING\),([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\.type!=="disabled"&&!\1,([A-Za-z_$][\w$]*)=\3&&[A-Za-z_$][\w$]*\(\)&&[A-Za-z_$][\w$]*\([A-Za-z_$][\w$]*\)\?\4\.display:void 0,([A-Za-z_$][\w$]*)=void 0;/g;
+  output = output.replace(
+    thinkingDisplaySplitPattern,
+    (full, envFlagVar, envFlagHelper, enabledVar, thinkingConfigVar, displayVar, requestVar) => {
+      displayCandidates += 1;
+      if (full.includes('display??"summarized"')) {
+        return full;
+      }
+
+      const replacement =
+        `${envFlagVar}=${envFlagHelper}(process.env.CLAUDE_CODE_DISABLE_THINKING),` +
+        `${enabledVar}=${thinkingConfigVar}.type!=="disabled"&&!${envFlagVar},` +
+        `${displayVar}=${enabledVar}?${thinkingConfigVar}.display??"summarized":void 0,${requestVar}=void 0;`;
+      if (replacement !== full) {
+        displayPatched += 1;
+        return replacement;
+      }
+      return full;
+    }
+  );
+
   candidates += displayCandidates;
   patched += displayPatched;
 
@@ -1322,22 +1351,29 @@ function patchAnswerStreaming(content) {
   let patched = 0;
 
   // The live assistant-answer preview (raw text_delta accumulation -> throttled
-  // store -> bottom-of-transcript streaming row) is fully wired upstream but the
-  // whole path is gated on one animation flag:
+  // store -> bottom-of-transcript streaming row) is fully wired upstream but
+  // gated on one animation flag:
   //   sk = !(state.settings.prefersReducedMotion ?? !1) && !isWindowsTerminal()
-  // That flag gates the delta-apply callback, the preview-visible flag, and
-  // deferMessages. Force the reduced-motion factor to true at the definition so
-  // answers stream even with prefersReducedMotion enabled; keep the Windows
-  // Terminal guard intact. Anchor on the adjacent peek/clear/apply throttle
-  // callback so only the streaming-text gate matches.
+  // That flag gates the delta-apply callback, the preview-visible flag, AND
+  // deferMessages (a render-coalescing path that keeps the transcript cheap
+  // while streaming). Flipping the whole flag re-enabled answer streaming but
+  // regressed live thinking, so patch only the two answer-streaming consumers
+  // and leave sk itself (and deferMessages) alone:
+  //   1. make the throttle callback always apply text deltas
+  //   2. drop the sk factor from the preview-visible flag, keeping the
+  //      Windows Terminal guard captured from the sk definition
   const gatePattern =
-    /=!\(([A-Za-z_$][\w$]*)\(\(([A-Za-z_$][\w$]*)\)=>\2\.settings\.prefersReducedMotion\)\?\?!1\)&&(![A-Za-z_$][\w$]*\(\))(,[A-Za-z_$][\w$]*=[A-Za-z_$][\w$]*\.useCallback\(\(([A-Za-z_$][\w$]*)\)=>\{if\(!([A-Za-z_$][\w$]*)\)\{if\(\5\(([A-Za-z_$][\w$]*)\.peek\(\)\)===null\)\7\.clear\(\);return\}\7\.apply\(\5\)\})/g;
+    /=!\(([A-Za-z_$][\w$]*)\(\(([A-Za-z_$][\w$]*)\)=>\2\.settings\.prefersReducedMotion\)\?\?!1\)&&!([A-Za-z_$][\w$]*)\(\),([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\.useCallback\(\(([A-Za-z_$][\w$]*)\)=>\{if\(!([A-Za-z_$][\w$]*)\)\{if\(\6\(([A-Za-z_$][\w$]*)\.peek\(\)\)===null\)\8\.clear\(\);return\}\8\.apply\(\6\)\},\[\7,\8\]\)/g;
 
-  const output = content.replace(
+  let terminalGuardFn = null;
+  let skVar = null;
+  let output = content.replace(
     gatePattern,
-    (full, _storeHook, _stateParam, terminalGuard, rest) => {
+    (full, _storeHook, _stateParam, wtGuard, cbVar, reactNs, cbParam, sk, buffer) => {
       candidates += 1;
-      const replacement = `=!0&&${terminalGuard}${rest}`;
+      terminalGuardFn = wtGuard;
+      skVar = sk;
+      const replacement = `=!(${_storeHook}((${_stateParam})=>${_stateParam}.settings.prefersReducedMotion)??!1)&&!${wtGuard}(),${cbVar}=${reactNs}.useCallback((${cbParam})=>{${buffer}.apply(${cbParam})},[${sk},${buffer}])`;
       if (replacement !== full) {
         patched += 1;
         return replacement;
@@ -1345,6 +1381,22 @@ function patchAnswerStreaming(content) {
       return full;
     }
   );
+
+  if (terminalGuardFn !== null && skVar !== null) {
+    const visibilityPattern = new RegExp(
+      `(\\.useSyncExternalStore\\(([A-Za-z_$][\\w$]*)\\.subscribe,\\2\\.getFlags\\),([A-Za-z_$][\\w$]*)=)${skVar.replace(/\$/g, "\\$")}&&\\(`,
+      "g"
+    );
+    output = output.replace(visibilityPattern, (full, prefix) => {
+      candidates += 1;
+      const replacement = `${prefix}!${terminalGuardFn}()&&(`;
+      if (replacement !== full) {
+        patched += 1;
+        return replacement;
+      }
+      return full;
+    });
+  }
 
   return {
     content: output,

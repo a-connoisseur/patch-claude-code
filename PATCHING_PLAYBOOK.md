@@ -280,6 +280,7 @@ Old bundle shapes we match:
 - 2.1.168-style UI reducers can run `displayTransform?.finalize()` inside the `message_stop` branch before switching to `"tool-use"`, and can use a block-form `case"message_delta":{...}`. The reducer patch must preserve those existing side effects while adding streaming-thinking cleanup before the stream transitions to normal response state.
 - 2.1.183-style UI reducers can keep `onStreamingThinking:<setter>` on the outer event dispatcher while moving the stream-event switch into a separate inner handler that destructures `onSetStreamMode`, `onStreamingToolUses`, `onStreamingText`, and `displayTransform`, but not `onStreamingThinking`. In that shape, inject `onStreamingThinking` into the inner handler destructuring, then patch `stream_request_start`, thinking/redacted-thinking block start, `thinking_delta`, text/message transitions, and `message_stop` there.
 - 2.1.199-style live thinking can still use the same `onStreamingThinking` state but may surface duplicate virtual entries if a thinking content-block start is handled more than once for the same index. Treat `streamingThinking.messages` as keyed by content-block index, not append-only.
+- 2.1.226-style request builders split the env-flag read into its own variable and gate the request display mode behind firstParty + interleaved-thinking helper calls: `ii=flag(env.CLAUDE_CODE_DISABLE_THINKING),di=cfg.type!=="disabled"&&!ii,vr=di&&B1()&&Xkn(model)?cfg.display:void 0,Gr=void 0;`. The older inline shape (`enabled=cfg.type!=="disabled"&&!flag(env...)`) no longer exists, so the display-defaulting sub-fix silently stopped matching there — with the result that requests carry no `display:"summarized"`, the API streams only estimated-token thinking deltas with no text, and live thinking appears only when the assistant message lands. The split shape gets its own matcher that rewrites to `vr=di?cfg.display??"summarized":void 0`, dropping the extra gates like the older patch did.
 - the duplicate live-thinking suppressor should match the semantic row shape around `param:{type:"thinking",thinking:<var>.thinking}` and the surrounding `marginTop:1` wrapper, not a specific wrapper component identifier
 
 Why this exists:
@@ -295,6 +296,7 @@ Likely break signs:
 - live thinking pins itself to the bottom of the transcript instead of staying above the later streamed text/tool blocks
 - patch count drops partially rather than fully; this often means only one of the sub-fixes drifted
 - patch count still looks nonzero but live thinking is broken; check whether the reducer/event fix actually touched the stream-event handler, not just renderer prop threading or final assistant-message summary paths
+- thinking only appears when the message lands even though the UI-side patches all hit; this is the request-side display-mode patch drifting (see the 2.1.226 split shape above) — verify the patched bundle contains `display??"summarized"`, because without it the API never streams thinking display text at all and no amount of UI patching can show it live
 
 ### `answer-streaming`
 
@@ -306,18 +308,21 @@ Background:
 
 - upstream 2.1.226 already ships a complete answer-streaming pipeline: the stream reducer accumulates `text_delta` into `onStreamingText` (capped at 1e6 chars), a throttled buffer flushes into an external store every 100ms, and a preview component renders the accumulated markdown at the bottom of the message list while loading
 - the entire path is gated on a single flag computed once in the app component: `sk = !(settings.prefersReducedMotion ?? !1) && !isWindowsTerminal()`
-- that flag gates three things: the delta-apply callback (deltas are dropped when false), the preview-visible flag, and `deferMessages`
+- that flag gates three things: the delta-apply callback (deltas are dropped when false), the preview-visible flag, and `deferMessages` (a render-coalescing path that keeps the transcript cheap while streaming)
 - with `prefersReducedMotion: true`, answers only appear after the message lands, while patched streaming thinking still works because its state path never consults this flag
 
 Old bundle shape we match:
 
-- the gate definition immediately followed by the throttle callback: `=!(<hook>((<s>)=><s>.settings.prefersReducedMotion)??!1)&&!<wtGuard>(),<cb>=<React>.useCallback((<u>)=>{if(!<sk>){if(<u>(<buf>.peek())===null)<buf>.clear();return}<buf>.apply(<u>)})`
+- the gate definition immediately followed by the throttle callback: `=!(<hook>((<s>)=><s>.settings.prefersReducedMotion)??!1)&&!<wtGuard>(),<cb>=<React>.useCallback((<u>)=>{if(!<sk>){if(<u>(<buf>.peek())===null)<buf>.clear();return}<buf>.apply(<u>)},[<sk>,<buf>])`
 - the peek/clear/apply throttle shape is unique in the bundle, so it pins the match to the streaming-text gate and not the other `prefersReducedMotion` reads (voice recording animation, spinner shimmer), which stay untouched
+- the preview-visible flag next to the store subscription: `.useSyncExternalStore(<store>.subscribe,<store>.getFlags),<visible>=<sk>&&(`
 
 What we rewrite:
 
-- replace the reduced-motion factor with `!0`, producing `=!0&&!<wtGuard>()`
-- the Windows Terminal guard (`WT_SESSION`) is deliberately preserved
+- rewrite the throttle callback body to always `apply` deltas, leaving `sk` itself untouched
+- rewrite the visible flag to `<visible>=!<wtGuard>()&&(`, with the guard function name captured from the `sk` definition
+- `sk` and therefore `deferMessages` keep their upstream reduced-motion behavior on purpose: an earlier version of this patch flipped the whole `sk` definition to `!0`, which also disabled the deferred-messages render coalescing
+- the Windows Terminal guard (`WT_SESSION`) is deliberately preserved in both spots
 
 Why this exists:
 
