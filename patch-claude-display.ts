@@ -1017,8 +1017,11 @@ function patchThinkingStreaming(content) {
   // stream-event switch into an inner handler that omits it from destructuring.
   // Re-introduce the option there, then patch the same semantic stream cases.
   if (createVirtualMessageHelper !== null) {
+    // 2.1.225 changed the options destructure from `let{...}=t;` to
+    // `let{...}=t,d=t.authoringProgressSurface===!0;` — a comma continuation.
+    // Match either tail so the whole reducer branch does not silently skip.
     const missingStreamingThinkingHandlerPattern =
-      /function [A-Za-z_$][\w$]*\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)(?:,[A-Za-z_$][\w$]*)?\)\{let\{([^}]*)\}=\2;/g;
+      /function [A-Za-z_$][\w$]*\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)(?:,[A-Za-z_$][\w$]*)?\)\{let\{([^}]*)\}=\2[;,]/g;
     let missingStreamingThinkingMatch;
     while ((missingStreamingThinkingMatch = missingStreamingThinkingHandlerPattern.exec(output)) !== null) {
       const eventParam = missingStreamingThinkingMatch[1];
@@ -1068,8 +1071,8 @@ function patchThinkingStreaming(content) {
 
       const replacements = [
         [
-          `let{${props}}=${optionsParam};`,
-          `let{${props},onStreamingThinking:${setStreamingThinkingParam}}=${optionsParam};`,
+          `let{${props}}=${optionsParam}`,
+          `let{${props},onStreamingThinking:${setStreamingThinkingParam}}=${optionsParam}`,
         ],
         [
           `if(${eventParam}.type==="stream_request_start"){${setModeParam}("requesting");return}`,
@@ -1142,6 +1145,13 @@ function patchThinkingStreaming(content) {
           [
             `if(${eventParam}.event.type==="message_stop"){${displayTransformParam}?.finalize(),${setModeParam}?.("tool-use"),${setStreamingToolsParam}?.(()=>[]);return}`,
             `if(${eventParam}.event.type==="message_stop"){${displayTransformParam}?.finalize(),${setStreamingThinkingParam}?.((__cc_prevStreamingThinking)=>__cc_prevStreamingThinking?{...__cc_prevStreamingThinking,isStreaming:!1,streamingEndedAt:Date.now(),currentIndex:null,currentMessage:null}:__cc_prevStreamingThinking),${setModeParam}?.("tool-use"),${setStreamingToolsParam}?.(()=>[]);return}`,
+          ],
+          // 2.1.225/226 wraps message_stop side effects in a comma-if that also
+          // resets an authoring-progress surface. Inject the streaming-thinking
+          // cleanup into the comma chain right after finalize().
+          [
+            `if(${eventParam}.event.type==="message_stop"){if(${displayTransformParam}?.finalize(),${setModeParam}?.("tool-use"),${setStreamingToolsParam}?.(()=>[]),`,
+            `if(${eventParam}.event.type==="message_stop"){if(${displayTransformParam}?.finalize(),${setStreamingThinkingParam}?.((__cc_prevStreamingThinking)=>__cc_prevStreamingThinking?{...__cc_prevStreamingThinking,isStreaming:!1,streamingEndedAt:Date.now(),currentIndex:null,currentMessage:null}:__cc_prevStreamingThinking),${setModeParam}?.("tool-use"),${setStreamingToolsParam}?.(()=>[]),`,
           ]
         );
       }
