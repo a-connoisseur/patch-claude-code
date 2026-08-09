@@ -367,6 +367,7 @@ Likely break signs:
 Intent:
 
 - in verbose mode, render the full line-numbered file content for Read tool results instead of the collapsed "Read N lines" row
+- this completes the `tool-call-verbose` intent on current builds: upstream's verbose result renderer stopped showing file content, so forcing `verbose:!0` alone no longer surfaces it
 
 Origin: ported from a hand-patch that previously lived only inside a distributed binary.
 
