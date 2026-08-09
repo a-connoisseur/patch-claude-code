@@ -362,6 +362,28 @@ Likely break signs:
 - subagent cards show status but no prompt content
 - prompt appears only after toggling transcript mode
 
+### `read-verbose-content`
+
+Intent:
+
+- in verbose mode, render the full line-numbered file content for Read tool results instead of the collapsed "Read N lines" row
+
+Origin: ported from a hand-patch that previously lived only inside a distributed binary.
+
+Old bundle shape we match:
+
+- the Read tool's export bag `{renderToolUseTag:()=>..,renderToolUseMessage:()=>..,renderToolUseErrorMessage:()=>..,renderToolResultMessage:()=>..}`, identified among all tool bags by the ` · pages ` copy in its use-message renderer
+- helpers discovered by shape: the line-number formatter `({content,startLine,...})=>` that early-returns `""`, and the jsx namespace / wrapper / text components taken from the fallback result renderer's own body
+
+What we rewrite:
+
+- replace the `renderToolResultMessage` getter with a wrapper that renders `formatter({content,startLine})` inside the wrapper/text components when `options.verbose` and the result is a text file read, falling back to the original renderer otherwise
+
+Likely break signs:
+
+- verbose mode shows only "Read N lines" again
+- candidate count drops to `0`; check whether the Read bag's ` · pages ` copy or getter ordering changed
+
 ### `disable-spinner-tips`
 
 Intent:

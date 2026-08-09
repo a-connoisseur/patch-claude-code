@@ -1798,6 +1798,72 @@ function patchWelcomePatchedBadge(content) {
   };
 }
 
+function patchReadVerboseContent(content) {
+  let candidates = 0;
+  let patched = 0;
+  let output = content;
+
+  // Line-number formatter found by shape: ({content,startLine,...}) that
+  // early-returns "" on empty content and joins numbered lines.
+  const formatterMatch = output.match(
+    /function ([A-Za-z_$][\w$]*)\(\{content:([A-Za-z_$][\w$]*),startLine:([A-Za-z_$][\w$]*)(?:,[^}]*)?\}\)\{if\(!\2\)return"";/
+  );
+  if (!formatterMatch) {
+    return { content: output, candidates, patched };
+  }
+  const formatter = formatterMatch[1];
+
+  // The Read tool's render bag: four getters ending in renderToolResultMessage,
+  // identified by the nearby " · pages " copy in its renderToolUseMessage.
+  const bagPattern =
+    /renderToolUseTag:\(\)=>[A-Za-z_$][\w$]*,renderToolUseMessage:\(\)=>[A-Za-z_$][\w$]*,renderToolUseErrorMessage:\(\)=>[A-Za-z_$][\w$]*,renderToolResultMessage:\(\)=>([A-Za-z_$][\w$]*)\}/g;
+  let bagMatch;
+  while ((bagMatch = bagPattern.exec(output)) !== null) {
+    const neighborhood = output.slice(bagMatch.index, bagMatch.index + 1600);
+    if (!neighborhood.includes("\\xB7 pages ") && !neighborhood.includes("\xB7 pages ")) {
+      continue;
+    }
+
+    const resultRenderer = bagMatch[1];
+    const rendererStart = output.indexOf(`function ${resultRenderer}(`);
+    if (rendererStart === -1) {
+      continue;
+    }
+    const rendererBody = output.slice(rendererStart, rendererStart + 1200);
+    const jsxCallMatch = rendererBody.match(
+      /([A-Za-z_$][\w$]*)\.jsx\(([A-Za-z_$][\w$]*),\{height:1,children:\1\.jsxs\(([A-Za-z_$][\w$]*),/
+    );
+    if (!jsxCallMatch) {
+      continue;
+    }
+    const [, jsxNs, wrapComponent, textComponent] = jsxCallMatch;
+
+    candidates += 1;
+    const before = bagMatch[0];
+    if (output.slice(bagMatch.index - 400, bagMatch.index + before.length).includes("__cc_readVerbose")) {
+      continue;
+    }
+    const after =
+      `renderToolUseTag:()=>${before.match(/renderToolUseTag:\(\)=>([A-Za-z_$][\w$]*)/)[1]},` +
+      `renderToolUseMessage:()=>${before.match(/renderToolUseMessage:\(\)=>([A-Za-z_$][\w$]*)/)[1]},` +
+      `renderToolUseErrorMessage:()=>${before.match(/renderToolUseErrorMessage:\(\)=>([A-Za-z_$][\w$]*)/)[1]},` +
+      `renderToolResultMessage:()=>(__cc_readVerboseResult,__cc_unusedTools,__cc_readVerboseOptions)=>{` +
+      `if(__cc_readVerboseOptions&&__cc_readVerboseOptions.verbose&&__cc_readVerboseResult&&__cc_readVerboseResult.type==="text"&&__cc_readVerboseResult.file&&typeof __cc_readVerboseResult.file.content==="string"&&__cc_readVerboseResult.file.content)` +
+      `return ${jsxNs}.jsx(${wrapComponent},{children:${jsxNs}.jsx(${textComponent},{children:${formatter}({content:__cc_readVerboseResult.file.content,startLine:__cc_readVerboseResult.file.startLine??1})})});` +
+      `return ${resultRenderer}(__cc_readVerboseResult)}}`;
+
+    output = output.slice(0, bagMatch.index) + after + output.slice(bagMatch.index + before.length);
+    patched += 1;
+    bagPattern.lastIndex = bagMatch.index + after.length;
+  }
+
+  return {
+    content: output,
+    candidates,
+    patched,
+  };
+}
+
 const PATCH_MODULES = [
   {
     id: "tool-call-verbose",
@@ -1838,6 +1904,11 @@ const PATCH_MODULES = [
     id: "subagent-prompt",
     description: "Show subagent Prompt blocks outside transcript mode",
     apply: patchSubagentPromptVisibility,
+  },
+  {
+    id: "read-verbose-content",
+    description: "Render full line-numbered file content for Read results in verbose mode",
+    apply: patchReadVerboseContent,
   },
   {
     id: "disable-spinner-tips",
