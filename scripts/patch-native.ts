@@ -147,6 +147,30 @@ function loadNativeBunModule(): NativeBunModule {
 }
 
 
+// patch-claude-display.ts prints "  <id> candidates: N, patched: M" per patch
+// and exits 0 even when every patch matched nothing, so its output is the only
+// signal that a patch actually landed.
+function tallyPatchIds(stdout: string, totals: Map<string, number>): void {
+  for (const line of stdout.split("\n")) {
+    const match = line.match(/^\s+(\S+)\s+candidates:\s*(\d+),\s*patched:\s*(\d+)/);
+    if (match) {
+      totals.set(match[1], (totals.get(match[1]) || 0) + Number(match[3]));
+    }
+  }
+}
+
+// `installer-label` is omitted: it matches nothing on current builds, so its
+// absence carries no signal.
+const EXPECTED_PATCH_IDS = [
+  "tool-call-verbose",
+  "thinking-inline",
+  "thinking-streaming",
+  "subagent-prompt",
+  "disable-spinner-tips",
+  "version-output",
+  "welcome-badge",
+];
+
 function patchCodeSplitBinary(
   nativeBun: NativeBunModule,
   allModules: BunModuleView[],
@@ -164,6 +188,7 @@ function patchCodeSplitBinary(
 
   const jsModules = allModules.filter((module) => module.loader === 1 && module.contents.length > 200);
   console.log(`Code-split binary: ${allModules.length} modules, ${jsModules.length} JS`);
+  const patchTotals = new Map<string, number>();
 
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "claude-native-patch-"));
   const tempContentPath = path.join(tempDir, "content.js");
@@ -177,9 +202,12 @@ function patchCodeSplitBinary(
       }
 
       fs.writeFileSync(tempContentPath, source, "utf8");
-      execFileSync(process.execPath, [patcherPath, "--file", tempContentPath, ...patchArgs], {
-        stdio: ["ignore", "pipe", "pipe"],
-      });
+      const stdout = execFileSync(
+        process.execPath,
+        [patcherPath, "--file", tempContentPath, ...patchArgs],
+        { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }
+      );
+      tallyPatchIds(stdout, patchTotals);
       const patched = fs.readFileSync(tempContentPath, "utf8");
       if (patched === source) {
         continue;
@@ -199,6 +227,19 @@ function patchCodeSplitBinary(
 
   if (overrides.size === 0) {
     throw new Error("No module accepted any patch; the anchors need updating for this build");
+  }
+
+  // Counting changed modules alone is too weak to catch a partial drift: if
+  // most patch ids stop matching on a new build while one still lands, the run
+  // would look successful and ship a mostly-unpatched binary. Require every
+  // expected id to have landed somewhere.
+  const missing = EXPECTED_PATCH_IDS.filter((id) => (patchTotals.get(id) || 0) === 0)
+    .filter((id) => !opts.disable.includes(id));
+  if (missing.length > 0) {
+    throw new Error(
+      `These patches matched nothing and would ship as no-ops: ${missing.join(", ")}. ` +
+        "Their anchors need updating for this build."
+    );
   }
 
   nativeBun.writeBunModules(outputPath, overrides);

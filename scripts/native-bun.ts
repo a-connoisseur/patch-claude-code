@@ -355,6 +355,12 @@ function rebuildBunData(
       ? Buffer.alloc(0)
       : sliceRange(bunData, moduleRecord.bytecodeOriginPath);
 
+    // `sourcemap` and `moduleInfo` are carried over untouched. A stale
+    // sourcemap only means wrong line numbers in stack traces. `moduleInfo`
+    // holds the module's import/export metadata, which stays valid only while
+    // patches leave the import/export shape alone -- as the display patches do.
+    // A future patch that adds or removes an import must rebuild it.
+
     const nextModule = {
       name: sliceRange(bunData, moduleRecord.name),
       contents: nextContents,
