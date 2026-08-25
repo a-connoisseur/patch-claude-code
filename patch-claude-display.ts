@@ -139,15 +139,18 @@ function patchCollapsedReadSearch(content, ctx = {}) {
     const end = endCandidates.length > 0 ? Math.min(...endCandidates) : output.length;
     const segment = output.slice(start, end);
 
-    const hasRendererCall =
-      segment.includes("createElement(") || segment.includes("jsx(") || segment.includes("jsxs(");
-    if (!hasRendererCall || !segment.includes("verbose:")) {
+    // Not gated on the factory name: it is a bare minified identifier in some
+    // builds. The detailed prop match below is the real filter.
+    if (!segment.includes("verbose:")) {
       index = start + o7qCaseNeedle.length;
       continue;
     }
 
     const callMatch = segment.match(
-      /(?:createElement|jsx|jsxs)\([A-Za-z_$][\w$]*,\{message:[^}]*inProgressToolUseIDs:[^}]*shouldAnimate:[^}]*verbose:[^,}]+,tools:[^}]*lookups:[^}]*isActiveGroup:[^}]*\}\)/
+      // The JSX factory is a bare minified identifier in some builds (2.1.245
+      // emits `o(bw,{message:...})`), so match any callee here. The props
+      // cluster below is what actually identifies this renderer.
+      /[A-Za-z_$][\w$]*\([A-Za-z_$][\w$]*,\{message:[^}]*inProgressToolUseIDs:[^}]*shouldAnimate:[^}]*verbose:[^,}]+,tools:[^}]*lookups:[^}]*isActiveGroup:[^}]*\}\)/
     );
     if (!callMatch) {
       index = start + o7qCaseNeedle.length;
@@ -384,7 +387,10 @@ function patchThinkingCase(content, ctx = {}) {
       }
     );
     nextSegment = nextSegment.replace(
-      /((?:createElement|jsx|jsxs)\([A-Za-z_$][\w$]*,\{)([^}]*)\}/g,
+      // Any callee: minified factories again. Scoped to the `case"thinking":`
+      // segment, and only isTranscriptMode/hideInTranscript are rewritten, so a
+      // broader callee match cannot touch unrelated calls.
+      /([A-Za-z_$][\w$]*\([A-Za-z_$][\w$]*,\{)([^}]*)\}/g,
       (full, prefix, props) => {
         let nextProps = props;
         nextProps = nextProps.replace(/isTranscriptMode:[^,}]+/g, (entry) => {
