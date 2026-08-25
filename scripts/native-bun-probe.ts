@@ -298,17 +298,11 @@ function findClaudeModuleContent(storage: BunStorage): Buffer {
   throw new Error("Could not find Claude JavaScript module in native binary");
 }
 
-type ModuleOverride = {
-  contents?: Buffer;
-  dropBytecode?: boolean;
-};
-
 function rebuildBunData(
   bunData: Buffer,
   bunOffsets: BunOffsets,
-  replacementContent: Buffer | null,
-  moduleStructSize: 36 | 52,
-  overrides?: Map<number, ModuleOverride>
+  replacementContent: Buffer,
+  moduleStructSize: 36 | 52
 ): Buffer {
   const rawBuffers: Buffer[] = [];
   const modules: Array<{
@@ -332,36 +326,17 @@ function rebuildBunData(
     const moduleRecord = readBunModule(moduleTable, moduleOffset, moduleStructSize);
     const moduleName = sliceRange(bunData, moduleRecord.name).toString("utf8");
 
-    // Newer Claude builds code-split into ~1400 /$bunfs/root/chunk-*.js
-    // modules, so "the JS" is no longer a single module. `overrides` addresses
-    // modules by index; the legacy single-module path is kept for callers that
-    // still pass replacementContent.
-    const override = overrides?.get(index);
-    let nextContents: Buffer;
-    if (override?.contents !== undefined) {
-      nextContents = override.contents;
-    } else if (!overrides && replacementContent !== null && isClaudeModuleName(moduleName)) {
-      nextContents = replacementContent;
-    } else {
-      nextContents = sliceRange(bunData, moduleRecord.contents);
-    }
-
-    // A module whose source we edited must lose its precompiled bytecode,
-    // otherwise Bun executes the stale bytecode and the edit is a no-op.
-    const nextBytecode = override?.dropBytecode
-      ? Buffer.alloc(0)
-      : sliceRange(bunData, moduleRecord.bytecode);
-    const nextBytecodeOriginPath = override?.dropBytecode
-      ? Buffer.alloc(0)
-      : sliceRange(bunData, moduleRecord.bytecodeOriginPath);
+    const nextContents = isClaudeModuleName(moduleName)
+      ? replacementContent
+      : sliceRange(bunData, moduleRecord.contents);
 
     const nextModule = {
       name: sliceRange(bunData, moduleRecord.name),
       contents: nextContents,
       sourcemap: sliceRange(bunData, moduleRecord.sourcemap),
-      bytecode: nextBytecode,
+      bytecode: sliceRange(bunData, moduleRecord.bytecode),
       moduleInfo: sliceRange(bunData, moduleRecord.moduleInfo),
-      bytecodeOriginPath: nextBytecodeOriginPath,
+      bytecodeOriginPath: sliceRange(bunData, moduleRecord.bytecodeOriginPath),
       encoding: moduleRecord.encoding,
       loader: moduleRecord.loader,
       moduleFormat: moduleRecord.moduleFormat,
@@ -498,25 +473,8 @@ function wrapSectionBunData(bunData: Buffer, sectionHeaderSize: 4 | 8): Buffer {
 
 function writeBinaryPreservingMode(binary: import("node-lief").Abstract.Binary, path: string): void {
   const tempPath = `${path}.tmp`;
-  const originalStat = fs.statSync(path);
   binary.write(tempPath);
-
-  // LIEF does not surface a short write, so a full disk yields a silently
-  // truncated (often 0-byte) binary that only fails later, at run time.
-  const writtenSize = fs.statSync(tempPath).size;
-  if (writtenSize < Number(originalStat.size) / 2) {
-    try {
-      fs.unlinkSync(tempPath);
-    } catch {
-      // Best-effort cleanup only.
-    }
-    throw new Error(
-      `Wrote only ${writtenSize} bytes for ${path} (original ${originalStat.size}); ` +
-        "the write was truncated, most likely out of disk space"
-    );
-  }
-
-  const originalMode = originalStat.mode;
+  const originalMode = fs.statSync(path).mode;
   fs.chmodSync(tempPath, originalMode);
 
   try {
@@ -1088,78 +1046,10 @@ function writeNativeBunContent(binaryPath: string, content: string): void {
   writePeBunContent(binary, binaryPath, wrappedSectionData);
 }
 
-// ---------------------------------------------------------------------------
-// multi-module API
-//
-// Claude Code >= 2.1.242 code-splits its bundle: the entry module is a ~20KB
-// stub that imports ~1400 /$bunfs/root/chunk-*.js modules, and almost all of
-// them carry precompiled bytecode. Reading only the entry module (what
-// readNativeBunContent does) therefore sees none of the real source.
-// ---------------------------------------------------------------------------
-
-type BunModuleView = {
-  index: number;
-  name: string;
-  contents: Buffer;
-  loader: number;
-  encoding: number;
-  bytecodeLength: number;
-};
-
-function readAllBunModules(binaryPath: string): BunModuleView[] {
-  const { binary } = parseNativeBinary(binaryPath);
-  const storage = parseNativeBunStorage(binary);
-  const moduleTable = sliceRange(storage.bunData, storage.bunOffsets.modulesPtr);
-  const moduleCount = Math.floor(moduleTable.length / storage.moduleStructSize);
-
-  const views: BunModuleView[] = [];
-  for (let index = 0; index < moduleCount; index += 1) {
-    const record = readBunModule(moduleTable, index * storage.moduleStructSize, storage.moduleStructSize);
-    views.push({
-      index,
-      name: sliceRange(storage.bunData, record.name).toString("utf8"),
-      contents: sliceRange(storage.bunData, record.contents),
-      loader: record.loader,
-      encoding: record.encoding,
-      bytecodeLength: record.bytecode.length,
-    });
-  }
-
-  return views;
-}
-
-function writeBunModules(binaryPath: string, overrides: Map<number, ModuleOverride>): void {
-  if (overrides.size === 0) {
-    throw new Error("writeBunModules called with no overrides");
-  }
-
-  const { LIEF, binary } = parseNativeBinary(binaryPath);
-  const storage = parseNativeBunStorage(binary);
-  const rebuiltBunData = rebuildBunData(
-    storage.bunData,
-    storage.bunOffsets,
-    null,
-    storage.moduleStructSize,
-    overrides
-  );
-
-  if (binary.format === "ELF") {
-    throw new Error("writeBunModules does not support ELF binaries yet");
-  }
-
-  const wrappedSectionData = wrapSectionBunData(rebuiltBunData, storage.sectionHeaderSize);
-  if (binary.format === "MachO") {
-    writeMachOBunContent(LIEF, binary, binaryPath, wrappedSectionData);
-    return;
-  }
-
-  writePeBunContent(binary, binaryPath, wrappedSectionData);
-}
-
 module.exports = {
   canNativeBunHandle,
   readNativeBunContent,
   writeNativeBunContent,
-  readAllBunModules,
-  writeBunModules,
 };
+
+module.exports.__probe = { parseNativeBunStorage, parseNativeBinary, readBunModule, sliceRange, detectModuleStructSize };
