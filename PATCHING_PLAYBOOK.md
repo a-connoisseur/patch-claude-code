@@ -21,7 +21,7 @@ The current flow is:
 2. Use `scripts/native-bun.ts` to read the embedded Bun module table.
 3. Select every embedded JavaScript module, including the CLI entry module and split chunks.
 4. Run `patch-claude-display.ts` across those modules and aggregate the patch counts.
-5. Use `scripts/native-bun.ts` to rebuild the module table with the changed module contents replaced and their stale Bun bytecode removed.
+5. Use `scripts/native-bun.ts` to replace changed module contents and remove their stale Bun bytecode.
 6. Re-sign on macOS.
 7. Publish the patched binary.
 
@@ -76,6 +76,8 @@ Important behavior:
 
 - a nonzero source patch count is not sufficient by itself: Bun can execute a module's embedded bytecode instead of its source
 - when a module's source changes, the writer removes its bytecode and bytecode origin path so Bun recompiles the patched source
+- 2.1.246-style split bundles contain bytecode for many modules; untouched bytecode must remain at its original offset or Bun can crash before loading the patched source
+- when unchanged bytecode remains, the writer preserves the original Bun data layout, appends the changed source, and updates only the changed module records
 - if a required patch matches nothing, the script fails before copying or rewriting the output binary
 - 2.1.233 names the entry module `/$bunfs/root/cli` on macOS/Linux and `B:/~BUN/root/cli` on Windows, so entry detection recognizes the stable `/root/cli` suffix in addition to older Claude entry names
 - 2.1.245 splits the application across more than a thousand `chunk-*.js` modules. Its `/root/cli` entry is only a small loader, so entry-module-only extraction produces misleading zero counts for UI patches.
@@ -145,12 +147,14 @@ Old bundle shape we match:
 - the `update` arm renders a richer diff component using `structuredPatch`
 - 2.1.186-style builds can use JSX-runtime calls like `.jsx(...)` and `.jsxs(...)` instead of `createElement(...)`
 - 2.1.245-style split chunks can call the imported JSX factory as a bare identifier
+- 2.1.246-style builds add a `replacedUndiffedContent` prop to the create renderer and reuse that path when an update has no displayable diff
 
 What we rewrite:
 
 - replace the `create` return path with a synthetic diff payload
 - build a one-sided `structuredPatch` where every line is prefixed with `+`
 - reuse the update renderer's `style` and component
+- preserve the upstream create renderer when `replacedUndiffedContent` is true so an undiffed update is not presented as a newly added file
 
 Why this exists:
 

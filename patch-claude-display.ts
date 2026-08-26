@@ -211,7 +211,7 @@ function patchWriteCreateDiffColors(content) {
       "(?:[A-Za-z_$][\\w$]*\\.(?:createElement|jsx|jsxs)|[A-Za-z_$][\\w$]*)";
     const createReturnMatch = createSegment.match(
       new RegExp(
-        `return (${rendererCallPattern})\\(([A-Za-z_$][\\w$]*),\\{filePath:([A-Za-z_$][\\w$]*),content:([A-Za-z_$][\\w$]*),verbose:([A-Za-z_$][\\w$]*)\\}\\)`
+        `return (${rendererCallPattern})\\(([A-Za-z_$][\\w$]*),\\{filePath:([A-Za-z_$][\\w$]*),content:([A-Za-z_$][\\w$]*),verbose:([A-Za-z_$][\\w$]*)(?:,replacedUndiffedContent:([A-Za-z_$][\\w$]*))?\\}\\)`
       )
     );
     if (!createReturnMatch) {
@@ -235,6 +235,7 @@ function patchWriteCreateDiffColors(content) {
     const fileVar = createReturnMatch[3];
     const contentVar = createReturnMatch[4];
     const verboseVar = createReturnMatch[5];
+    const replacedUndiffedContentVar = createReturnMatch[6];
     const diffRenderer = updateRendererMatch[1];
     const styleVar = updateRendererMatch[2];
 
@@ -246,7 +247,10 @@ function patchWriteCreateDiffColors(content) {
       : `${contentVar}===""?0:${contentVar}.split(\`\\n\`).length`;
 
     const before = createReturnMatch[0];
-    const after = `return ${renderCall}(${diffRenderer},{filePath:${fileVar},structuredPatch:[{oldStart:1,oldLines:0,newStart:1,newLines:${lineCountExpr},lines:${contentVar}===""?[]:${contentVar}.split(\`\\n\`).map((__cc_line)=>"+"+__cc_line)}],firstLine:${contentVar}.split(\`\\n\`)[0]??null,fileContent:"",style:${styleVar},verbose:${verboseVar},previewHint:void 0})`;
+    const diffRender = `${renderCall}(${diffRenderer},{filePath:${fileVar},structuredPatch:[{oldStart:1,oldLines:0,newStart:1,newLines:${lineCountExpr},lines:${contentVar}===""?[]:${contentVar}.split(\`\\n\`).map((__cc_line)=>"+"+__cc_line)}],firstLine:${contentVar}.split(\`\\n\`)[0]??null,fileContent:"",style:${styleVar},verbose:${verboseVar},previewHint:void 0})`;
+    const after = replacedUndiffedContentVar
+      ? `return ${replacedUndiffedContentVar}?${before.slice("return ".length)}:${diffRender}`
+      : `return ${diffRender}`;
 
     if (!createSegment.includes(before)) {
       index = updateStart + updateNeedle.length;

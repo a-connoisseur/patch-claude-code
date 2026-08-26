@@ -322,6 +322,63 @@ function readBunModuleContents(storage: BunStorage): NativeBunModuleContent[] {
   return modules;
 }
 
+function rebuildBunDataPreservingBytecodeOffsets(
+  bunData: Buffer,
+  bunOffsets: BunOffsets,
+  replacementContents: ReadonlyMap<string, Buffer>,
+  moduleStructSize: 36 | 52
+): Buffer {
+  const moduleTable = sliceRange(bunData, bunOffsets.modulesPtr);
+  const moduleCount = Math.floor(moduleTable.length / moduleStructSize);
+  const replacements: Array<{ index: number; contents: Buffer }> = [];
+  let replacementBytes = 0;
+
+  for (let index = 0; index < moduleCount; index += 1) {
+    const moduleOffset = index * moduleStructSize;
+    const moduleRecord = readBunModule(moduleTable, moduleOffset, moduleStructSize);
+    const moduleName = sliceRange(bunData, moduleRecord.name).toString("utf8");
+    const contents = replacementContents.get(moduleName);
+    if (!contents) {
+      continue;
+    }
+
+    replacements.push({ index, contents });
+    replacementBytes += contents.length + 1;
+  }
+
+  const originalOffsetsOffset = bunData.length - BUN_TRAILER.length - 32;
+  const offsetsOffset = originalOffsetsOffset + replacementBytes;
+  const trailerOffset = offsetsOffset + 32;
+  const rebuilt = Buffer.alloc(trailerOffset + BUN_TRAILER.length);
+  bunData.copy(rebuilt, 0, 0, originalOffsetsOffset);
+
+  let contentsOffset = originalOffsetsOffset;
+  for (const replacement of replacements) {
+    replacement.contents.copy(rebuilt, contentsOffset);
+    const moduleRecordOffset = bunOffsets.modulesPtr.offset + replacement.index * moduleStructSize;
+    rebuilt.writeUInt32LE(contentsOffset, moduleRecordOffset + 8);
+    rebuilt.writeUInt32LE(replacement.contents.length, moduleRecordOffset + 12);
+    rebuilt.writeUInt32LE(0, moduleRecordOffset + 24);
+    rebuilt.writeUInt32LE(0, moduleRecordOffset + 28);
+    if (moduleStructSize === 52) {
+      rebuilt.writeUInt32LE(0, moduleRecordOffset + 40);
+      rebuilt.writeUInt32LE(0, moduleRecordOffset + 44);
+    }
+    contentsOffset += replacement.contents.length + 1;
+  }
+
+  rebuilt.writeBigUInt64LE(BigInt(offsetsOffset), offsetsOffset);
+  rebuilt.writeUInt32LE(bunOffsets.modulesPtr.offset, offsetsOffset + 8);
+  rebuilt.writeUInt32LE(bunOffsets.modulesPtr.length, offsetsOffset + 12);
+  rebuilt.writeUInt32LE(bunOffsets.entryPointId, offsetsOffset + 16);
+  rebuilt.writeUInt32LE(bunOffsets.compileExecArgvPtr.offset, offsetsOffset + 20);
+  rebuilt.writeUInt32LE(bunOffsets.compileExecArgvPtr.length, offsetsOffset + 24);
+  rebuilt.writeUInt32LE(bunOffsets.flags, offsetsOffset + 28);
+  BUN_TRAILER.copy(rebuilt, trailerOffset);
+
+  return rebuilt;
+}
+
 function rebuildBunData(
   bunData: Buffer,
   bunOffsets: BunOffsets,
@@ -344,6 +401,27 @@ function rebuildBunData(
 
   const moduleTable = sliceRange(bunData, bunOffsets.modulesPtr);
   const moduleCount = Math.floor(moduleTable.length / moduleStructSize);
+  let hasUnchangedBytecode = false;
+
+  for (let index = 0; index < moduleCount; index += 1) {
+    const moduleOffset = index * moduleStructSize;
+    const moduleRecord = readBunModule(moduleTable, moduleOffset, moduleStructSize);
+    const moduleName = sliceRange(bunData, moduleRecord.name).toString("utf8");
+    if (moduleRecord.bytecode.length > 0 && !replacementContents.has(moduleName)) {
+      hasUnchangedBytecode = true;
+      break;
+    }
+  }
+
+  if (hasUnchangedBytecode) {
+    // Bun's split bundles keep bytecode in a position-sensitive pool.
+    return rebuildBunDataPreservingBytecodeOffsets(
+      bunData,
+      bunOffsets,
+      replacementContents,
+      moduleStructSize
+    );
+  }
 
   for (let index = 0; index < moduleCount; index += 1) {
     const moduleOffset = index * moduleStructSize;
