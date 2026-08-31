@@ -74,7 +74,7 @@ jobs:
         if: matrix.platform_label == 'macos-arm64'
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: "1.4.1"
+          bun-version: "1.4.0"
 
       - name: Install dependencies
         id: dependencies
