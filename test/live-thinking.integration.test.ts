@@ -164,7 +164,7 @@ liveThinkingTest(
       expect(exitCode, `${stderr}\n${output}`).toBe(0);
       expect(requestReceived).toBe(true);
       expect(output).toContain(finalText);
-      expect(sawThinkingBeforeFinalEvent).toBe(true);
+      expect(sawThinkingBeforeFinalEvent, `${stderr}\n${output}`).toBe(true);
     } finally {
       server.stop(true);
       processHandle.kill();

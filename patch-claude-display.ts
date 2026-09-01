@@ -895,9 +895,13 @@ function patchThinkingStreaming(content) {
   let createVirtualMessageHelper =
     transcriptToolUseHelpersMatch?.[1] ?? virtualMessageHelperMatch?.[1] ?? null;
   let transcriptStreamingThinkingVar = null;
-  const rendererStreamingThinkingMatch = output.match(
-    /\(\{messages:[^}]*?streamingToolUses:[A-Za-z_$][\w$]*,streamingThinking:([A-Za-z_$][\w$]*),(?:showAllInTranscript|isLoading):/
-  );
+  const rendererStreamingThinkingMatch =
+    output.match(
+      /\(\{messages:[^}]*?streamingToolUses:[A-Za-z_$][\w$]*,streamingThinking:([A-Za-z_$][\w$]*),(?:showAllInTranscript|isLoading):/
+    ) ??
+    output.match(
+      /\{messages:[^}]*?streamingToolUses:[A-Za-z_$][\w$]*,streamingThinking:([A-Za-z_$][\w$]*),(?:showAllInTranscript|isLoading):[^}]*\}=[A-Za-z_$][\w$]*/
+    );
   if (rendererStreamingThinkingMatch) {
     transcriptStreamingThinkingVar = rendererStreamingThinkingMatch[1];
   } else if (streamingVar !== null) {
@@ -969,6 +973,53 @@ function patchThinkingStreaming(content) {
         return `${extrasVar}=${memoCall}(()=>{let __cc_streamingToolUseExtras=${streamingToolUsesVar}.map((${toolUseEntryVar})=>{let{id:${toolUseIdVar},minted:${mintedVar}}=${resolveToolUseIdHelper}(${toolUseEntryVar}),${toolUseMessageVar}=${createMessageHelper}({content:[${mintedVar}?{...${toolUseEntryVar}.contentBlock,id:${toolUseIdVar}}:${toolUseEntryVar}.contentBlock]});return ${toolUseMessageVar}.uuid=${mintedVar}?${toolUseIdVar}:${createUUIDHelper}(${toolUseIdVar},0),{index:${toolUseEntryVar}.index??9007199254740991,messages:${normalizeMessagesHelper}([${toolUseMessageVar}])}}),__cc_streamingThinkingExtras=(${transcriptStreamingThinkingVar}?.messages??[]).map((__cc_entry,__cc_index)=>({index:__cc_entry.index??9007199254740991+__cc_index,messages:${normalizeMessagesHelper}([__cc_entry.message??__cc_entry])}));return[...__cc_streamingToolUseExtras,...__cc_streamingThinkingExtras].sort((__cc_a,__cc_b)=>__cc_a.index===__cc_b.index?0:__cc_a.index-__cc_b.index).flatMap((__cc_entry)=>__cc_entry.messages)},[${streamingToolUsesVar},${resolveToolUseIdHelper},${transcriptStreamingThinkingVar}])`;
       }
     );
+
+    const compilerCachedToolExtrasPattern = new RegExp(
+      `(${identifierPattern})=(${identifierPattern})\\.flatMap\\((${identifierPattern})\\);`,
+      "g"
+    );
+    let compilerCachedToolExtrasMatch;
+    while (
+      (compilerCachedToolExtrasMatch = compilerCachedToolExtrasPattern.exec(output)) !== null
+    ) {
+      const [full, extrasVar, streamingToolUsesVar, renderToolUseVar] =
+        compilerCachedToolExtrasMatch;
+      const matchIndex = compilerCachedToolExtrasMatch.index;
+      const searchStart = Math.max(0, matchIndex - 1800);
+      const precedingSegment = output.slice(searchStart, matchIndex);
+      const renderToolUsePattern = new RegExp(
+        `${escapeRegExp(renderToolUseVar)}=\\((${identifierPattern})\\)=>\\{` +
+          `[\\s\\S]{0,1200}?\\.contentBlock[\\s\\S]{0,1200}?` +
+          `return (${identifierPattern})\\.uuid=[\\s\\S]{0,600}?,(${identifierPattern})\\(\\[\\2\\]\\)\\}`
+      );
+      const renderToolUseMatch = precedingSegment.match(renderToolUsePattern);
+      if (!renderToolUseMatch) {
+        continue;
+      }
+
+      const normalizeMessagesHelper = renderToolUseMatch[3];
+      const cachePrefix = `,${extrasVar};if(`;
+      const cachePrefixIndex = output.lastIndexOf(cachePrefix, matchIndex);
+      const cacheIfIndex = cachePrefixIndex + cachePrefix.length - "if(".length;
+      if (cachePrefixIndex === -1 || matchIndex - cacheIfIndex > 1800) {
+        continue;
+      }
+
+      inlineThinkingCandidates += 1;
+      inlineThinkingPatched += 1;
+      const replacement =
+        `${extrasVar}=[...${streamingToolUsesVar}.map((__cc_entry)=>({index:__cc_entry.index??9007199254740991,messages:${renderToolUseVar}(__cc_entry)})),` +
+        `...(${transcriptStreamingThinkingVar}?.messages??[]).map((__cc_entry,__cc_index)=>({index:__cc_entry.index??9007199254740991+__cc_index,messages:${normalizeMessagesHelper}([__cc_entry.message??__cc_entry])}))]` +
+        `.sort((__cc_a,__cc_b)=>__cc_a.index===__cc_b.index?0:__cc_a.index-__cc_b.index).flatMap((__cc_entry)=>__cc_entry.messages);`;
+      output =
+        output.slice(0, cacheIfIndex + 3) +
+        "!0||" +
+        output.slice(cacheIfIndex + 3, matchIndex) +
+        replacement +
+        output.slice(matchIndex + full.length);
+      compilerCachedToolExtrasPattern.lastIndex =
+        matchIndex + replacement.length + "!0||".length;
+    }
     candidates += inlineThinkingCandidates;
     patched += inlineThinkingPatched;
   }
