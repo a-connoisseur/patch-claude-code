@@ -13,12 +13,7 @@ Here is an exhaustive list of things it changes:
 
 #### Thinking note:
 
-- If you want thinking to stream live in the UI without verbose mode, add this to your Claude settings:
-
-```json
-"showThinkingSummaries": true
-```
-- Settings can come from `~/.claude/settings.json`, `.claude/settings.json`, or `.claude/settings.local.json`.
+- The patched binary requests summarized thinking automatically. You do not need to enable `showThinkingSummaries` in your Claude settings.
 
 ## Quick Start
 

@@ -271,6 +271,7 @@ Sub-fixes currently bundled here:
 - bottom-row suppressor: remove the separate live-thinking row that sits outside the main message flow so streaming thinking only renders inline once
 - reducer/event fix: update the stream event handler so `stream_request_start`, `thinking`, `thinking_delta`, `text`, `message_delta`, and `message_stop` keep per-block streaming thinking state in sync without relying on footer-row rendering
 - duplicate-index fix: keep only one virtual streaming-thinking message per content-block index so repeated block-start handling cannot create two live blocks that receive the same later deltas
+- request display fix: default eligible thinking requests to `display: "summarized"` so the API sends displayable text for the live renderer
 
 Old bundle shapes we match:
 
@@ -293,6 +294,7 @@ Old bundle shapes we match:
 - 2.1.245-style split chunks move the stream store, event reducer, and transcript renderer into separate modules. The transcript wrapper selects `streamingToolUses` from `turn.stream`; select `streamingThinking` through the same path, thread it into the renderer, and allow a bare imported memo hook when building inline extras. The reducer can rediscover the virtual assistant-message constructor from its semantic `{content,isVirtual,uuid}` signature before adding thinking event updates.
 - 2.1.250-style transcript wrappers select streaming tool uses from a focused-turn expression such as `(isMain?turn:null)?.stream`, and their renderer signature can put `isLoading:` directly after `streamingToolUses:`. Match that conditional stream expression, invalidate the compiled renderer-element cache, and merge thinking messages into the newer deduplicated tool-use extras pipeline.
 - 2.1.257-style transcript renderers destructure props inside the function and compiler-cache the deduplicated tool-use extras behind nested cache conditions. Detect the local `streamingThinking:` destructuring, merge thinking messages into the indexed extras list, and invalidate the outer cache that owns that list rather than the inner cache that owns only the tool-use callback.
+- 2.1.257-and-later request builders can calculate a separate display-eligibility variable between the thinking-enabled check and the final `thinking.display` lookup. Match that intermediate assignment and default the display value there; other streaming sub-fixes can keep the aggregate patch count nonzero while requests omit displayable thinking.
 - the duplicate live-thinking suppressor should match the semantic row shape around `param:{type:"thinking",thinking:<var>.thinking}` and the surrounding `marginTop:1` wrapper, not a specific wrapper component identifier
 
 Why this exists:
@@ -308,6 +310,7 @@ Likely break signs:
 - live thinking pins itself to the bottom of the transcript instead of staying above the later streamed text/tool blocks
 - patch count drops partially rather than fully; this often means only one of the sub-fixes drifted
 - patch count still looks nonzero but live thinking is broken; check whether the reducer/event fix actually touched the stream-event handler, not just renderer prop threading or final assistant-message summary paths
+- the API request has thinking enabled but omits `thinking.display: "summarized"`
 
 ### `subagent-prompt`
 

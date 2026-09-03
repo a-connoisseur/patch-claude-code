@@ -47,8 +47,6 @@ def main():
     if pid == 0:
         argv = [
             binary,
-            "--settings",
-            '{"showThinkingSummaries":true}',
             "--strict-mcp-config",
             "--mcp-config",
             '{"mcpServers":{}}',

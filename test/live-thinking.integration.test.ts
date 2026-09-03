@@ -30,13 +30,14 @@ function cleanEnvironment(overrides: Record<string, string>): Record<string, str
 }
 
 liveThinkingTest(
-  "renders thinking before the final response without live credentials",
+  "requests and renders thinking before the final response without live credentials",
   async () => {
     const binaryPath = isAbsolute(binaryInput!) ? binaryInput! : resolve(binaryInput!);
     expect(await Bun.file(binaryPath).exists()).toBe(true);
 
     let finalEventSent = false;
     let requestReceived = false;
+    let requestBody: { thinking?: { display?: string } } | null = null;
     let sawThinkingBeforeFinalEvent = false;
     const configDir = await mkdtemp(join(tmpdir(), "claude-live-thinking-test-"));
     await writeFile(
@@ -57,13 +58,14 @@ liveThinkingTest(
     const server = Bun.serve({
       hostname: "127.0.0.1",
       port: 0,
-      fetch(request) {
+      async fetch(request) {
         const url = new URL(request.url);
         if (request.method !== "POST" || !url.pathname.endsWith("/v1/messages")) {
           return Response.json({ error: "not found" }, { status: 404 });
         }
 
         requestReceived = true;
+        requestBody = (await request.json()) as { thinking?: { display?: string } };
         const stream = new ReadableStream({
           async start(controller) {
             const send = (type: string, data: unknown) => controller.enqueue(event(type, data));
@@ -163,6 +165,7 @@ liveThinkingTest(
 
       expect(exitCode, `${stderr}\n${output}`).toBe(0);
       expect(requestReceived).toBe(true);
+      expect(requestBody?.thinking?.display).toBe("summarized");
       expect(output).toContain(finalText);
       expect(sawThinkingBeforeFinalEvent, `${stderr}\n${output}`).toBe(true);
     } finally {
