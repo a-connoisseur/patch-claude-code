@@ -845,6 +845,19 @@ function patchThinkingStreaming(content) {
       return full;
     }
   );
+  const thinkingDisplayHighlightsPattern = new RegExp(
+    `((${identifierPattern})=${identifierPattern}\\(process\\.env\\.CLAUDE_CODE_DISABLE_THINKING\\),` +
+      `(${identifierPattern})=(${identifierPattern})\\.type!=="disabled"&&!\\2,` +
+      `(${identifierPattern})=\\3&&${identifierPattern}\\(\\)&&${identifierPattern}\\(${identifierPattern}\\),` +
+      `${identifierPattern}=!\\5\\?void 0:\\4\\.display==="highlights"&&${identifierPattern}\\(\\)\\?"omitted":\\4\\.display)` +
+      `(?:\\?\\?void 0)?(?=,${identifierPattern}=void 0;)`,
+    "g"
+  );
+  output = output.replace(thinkingDisplayHighlightsPattern, (_full, displayExpression) => {
+    displayCandidates += 1;
+    displayPatched += 1;
+    return `${displayExpression}??"summarized"`;
+  });
   candidates += displayCandidates;
   patched += displayPatched;
 
