@@ -39,6 +39,11 @@ for (const [version, source, expected] of [
     'Ub=De(process.env.CLAUDE_CODE_DISABLE_THINKING),Kg=r.type!=="disabled"&&!Ub,ic=Kg&&Ug()&&_Qt(_e),Vg=!ic?void 0:r.display==="highlights"&&rIr()?"omitted":r.display,yc=void 0;',
     'Ub=De(process.env.CLAUDE_CODE_DISABLE_THINKING),Kg=r.type!=="disabled"&&!Ub,ic=Kg&&Ug()&&_Qt(_e),Vg=!ic?void 0:r.display==="highlights"&&rIr()?"omitted":r.display??"summarized",yc=void 0;',
   ],
+  [
+    "2.1.281",
+    'Zv=Oe(process.env.CLAUDE_CODE_DISABLE_THINKING),Ik=r.type!=="disabled"&&!Zv,p_=()=>w3e(_e)||Le!==void 0&&w3e(Le),Zl=Ik&&dg()&&ton(_e),Kg=!Zl?void 0:r.display==="highlights"&&DFr()?"omitted":r.display,zd=void 0;',
+    'Zv=Oe(process.env.CLAUDE_CODE_DISABLE_THINKING),Ik=r.type!=="disabled"&&!Zv,p_=()=>w3e(_e)||Le!==void 0&&w3e(Le),Zl=Ik&&dg()&&ton(_e),Kg=!Zl?void 0:r.display==="highlights"&&DFr()?"omitted":r.display??"summarized",zd=void 0;',
+  ],
 ] as const) {
   test(`defaults eligible ${version} thinking requests to summarized display`, () => {
     const result = patchContents([source], { disable: disabledPatches });
