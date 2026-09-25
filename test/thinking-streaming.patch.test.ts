@@ -56,32 +56,38 @@ for (const [version, source, expected] of [
   });
 }
 
-test("preserves thinking eligibility and explicit display modes with highlight requests", () => {
-  const source = 'let disabled=flag(process.env.CLAUDE_CODE_DISABLE_THINKING),enabled=config.type!=="disabled"&&!disabled,eligible=enabled&&provider()&&supports(model),display=!eligible?void 0:config.display==="highlights"&&highlights()?"omitted":config.display,request=void 0;return display;';
-  const { contents: [patched] } = patchContents([source], { disable: disabledPatches });
-  const getDisplay = new Function(
-    "config", "process", "flag", "provider", "supports", "model", "highlights", patched
-  );
-  const evaluate = (
-    config: { type: string; display?: string },
-    { disabled = false, provider = true, supports = true, highlights = true } = {}
-  ) => getDisplay(
-    config,
-    { env: { CLAUDE_CODE_DISABLE_THINKING: disabled } },
-    Boolean,
-    () => provider,
-    () => supports,
-    "test-model",
-    () => highlights
-  );
+for (const [eligibility, providerInHelper] of [
+  ["enabled&&provider()&&supports(model)", false],
+  ["enabled&&supports(model)", true],
+] as const) {
+  test(`preserves thinking eligibility and explicit display modes with ${eligibility}`, () => {
+    const source = `let disabled=flag(process.env.CLAUDE_CODE_DISABLE_THINKING),enabled=config.type!=="disabled"&&!disabled,eligible=${eligibility},display=!eligible?void 0:config.display==="highlights"&&highlights()?"omitted":config.display,request=void 0;return display;`;
+    const { contents: [patched] } = patchContents([source], { disable: disabledPatches });
+    const getDisplay = new Function(
+      "config", "process", "flag", "provider", "supports", "model", "highlights", patched
+    );
+    const evaluate = (
+      config: { type: string; display?: string },
+      { disabled = false, provider = true, supports = true, highlights = true } = {}
+    ) => getDisplay(
+      config,
+      { env: { CLAUDE_CODE_DISABLE_THINKING: disabled } },
+      Boolean,
+      () => provider,
+      () => supports && (!providerInHelper || provider),
+      "test-model",
+      () => highlights
+    );
 
-  expect(evaluate({ type: "enabled" })).toBe("summarized");
-  expect(evaluate({ type: "disabled" })).toBeUndefined();
-  expect(evaluate({ type: "enabled" }, { disabled: true })).toBeUndefined();
-  expect(evaluate({ type: "enabled" }, { provider: false })).toBeUndefined();
-  expect(evaluate({ type: "enabled" }, { supports: false })).toBeUndefined();
-  expect(evaluate({ type: "enabled", display: "summarized" })).toBe("summarized");
-  expect(evaluate({ type: "enabled", display: "omitted" })).toBe("omitted");
-  expect(evaluate({ type: "enabled", display: "highlights" })).toBe("omitted");
-  expect(evaluate({ type: "enabled", display: "highlights" }, { highlights: false })).toBe("highlights");
-});
+    expect(evaluate({ type: "enabled" })).toBe("summarized");
+    expect(evaluate({ type: "disabled" })).toBeUndefined();
+    expect(evaluate({ type: "enabled" }, { disabled: true })).toBeUndefined();
+    expect(evaluate({ type: "enabled" }, { provider: false })).toBeUndefined();
+    expect(evaluate({ type: "enabled" }, { supports: false })).toBeUndefined();
+    expect(evaluate({ type: "enabled", display: "summarized" })).toBe("summarized");
+    expect(evaluate({ type: "enabled", display: "omitted" })).toBe("omitted");
+    expect(evaluate({ type: "enabled", display: "highlights" })).toBe("omitted");
+    expect(evaluate({ type: "enabled", display: "highlights" }, { highlights: false })).toBe("highlights");
+    expect(patchContents([patched], { disable: disabledPatches }).contents[0]).toBe(patched);
+  });
+}

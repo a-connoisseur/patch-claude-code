@@ -846,7 +846,7 @@ function patchThinkingStreaming(content) {
     }
   );
   const thinkingDisplayHighlightsPattern = new RegExp(
-    `((${identifierPattern})=${identifierPattern}&&${identifierPattern}\\(\\)&&${identifierPattern}\\(${identifierPattern}\\),` +
+    `((${identifierPattern})=${identifierPattern}(?:&&${identifierPattern}\\(\\))?&&${identifierPattern}\\(${identifierPattern}\\),` +
       `${identifierPattern}=!\\2\\?void 0:(${identifierPattern})\\.display==="highlights"&&${identifierPattern}\\(\\)\\?"omitted":\\3\\.display)` +
       `(?:\\?\\?void 0)?(?=,${identifierPattern}=void 0;)`,
     "g"
