@@ -856,6 +856,29 @@ function patchThinkingStreaming(content) {
     displayPatched += 1;
     return `${displayExpression}??"summarized"`;
   });
+  const thinkingDisplayInlineEligibilityPattern = new RegExp(
+    `(${identifierPattern}=!\\(${identifierPattern}&&${identifierPattern}\\(${identifierPattern}\\)\\)\\?void 0:` +
+      `(${identifierPattern})\\.display==="highlights"&&${identifierPattern}\\(\\)\\?"omitted":\\2\\.display)` +
+      `(?:\\?\\?void 0)?(?=,${identifierPattern}=void 0;)`,
+    "g"
+  );
+  output = output.replace(thinkingDisplayInlineEligibilityPattern, (_full, displayExpression) => {
+    displayCandidates += 1;
+    displayPatched += 1;
+    return `${displayExpression}??"summarized"`;
+  });
+
+  // Connector text mode overwrites the request display after eligibility is resolved.
+  const connectorThinkingDisplayPattern = new RegExp(
+    `(case"connector_text":\\{if\\(\\((${identifierPattern})\\?\\.type==="adaptive"\\|\\|\\2\\?\\.type==="enabled"\\)` +
+      `[^{};]{0,600}\\)\\{if\\(\\2=\\{\\.\\.\\.\\2,display:)"updates"`,
+    "g"
+  );
+  output = output.replace(connectorThinkingDisplayPattern, (_full, prefix, requestVar) => {
+    displayCandidates += 1;
+    displayPatched += 1;
+    return `${prefix}${requestVar}.display??"summarized"`;
+  });
   candidates += displayCandidates;
   patched += displayPatched;
 

@@ -44,6 +44,11 @@ for (const [version, source, expected] of [
     'Zv=Oe(process.env.CLAUDE_CODE_DISABLE_THINKING),Ik=r.type!=="disabled"&&!Zv,p_=()=>w3e(_e)||Le!==void 0&&w3e(Le),Zl=Ik&&dg()&&ton(_e),Kg=!Zl?void 0:r.display==="highlights"&&DFr()?"omitted":r.display,zd=void 0;',
     'Zv=Oe(process.env.CLAUDE_CODE_DISABLE_THINKING),Ik=r.type!=="disabled"&&!Zv,p_=()=>w3e(_e)||Le!==void 0&&w3e(Le),Zl=Ik&&dg()&&ton(_e),Kg=!Zl?void 0:r.display==="highlights"&&DFr()?"omitted":r.display??"summarized",zd=void 0;',
   ],
+  [
+    "2.1.290",
+    'Wh=a.CLAUDE_CODE_DISABLE_THINKING,Kh=r.type!=="disabled"&&!Wh,Bd=()=>St.thinking.rejectsDisabled||Bt!==void 0&&Zve(Bt),Mb=!(Kh&&jYn(Xe))?void 0:r.display==="highlights"&&X7t()?"omitted":r.display,Vu=void 0;',
+    'Wh=a.CLAUDE_CODE_DISABLE_THINKING,Kh=r.type!=="disabled"&&!Wh,Bd=()=>St.thinking.rejectsDisabled||Bt!==void 0&&Zve(Bt),Mb=!(Kh&&jYn(Xe))?void 0:r.display==="highlights"&&X7t()?"omitted":r.display??"summarized",Vu=void 0;',
+  ],
 ] as const) {
   test(`defaults eligible ${version} thinking requests to summarized display`, () => {
     const result = patchContents([source], { disable: disabledPatches });
@@ -55,6 +60,40 @@ for (const [version, source, expected] of [
     });
   });
 }
+
+test("keeps eligible thinking display through connector text request selection", () => {
+  const source = `let disabled=env.CLAUDE_CODE_DISABLE_THINKING,enabled=config.type!=="disabled"&&!disabled,display=!(enabled&&supports(model))?void 0:config.display==="highlights"&&highlights()?"omitted":config.display,request=void 0;
+if(enabled)request={type:config.type,display};
+switch(mode){case"thinking_and_connector_text":case"none":break;case"connector_text":{if((request?.type==="adaptive"||request?.type==="enabled")&&supports(model)&&!("thinking"in body)&&!disabled){if(request={...request,display:"updates"},!betas.includes("test-beta"))betas.push("test-beta")}break}}
+return request;`;
+  const { contents: [patched], patchResults } = patchContents([source], { disable: disabledPatches });
+  const getRequest = new Function(
+    "config", "env", "supports", "model", "highlights", "mode", "body", "betas", patched
+  );
+  const evaluate = (
+    config: { type: string; display?: string },
+    { disabled = false, supports = true, highlights = true, mode = "connector_text" } = {}
+  ) => getRequest(
+    config, { CLAUDE_CODE_DISABLE_THINKING: disabled }, () => supports, "test-model",
+    () => highlights, mode, {}, []
+  );
+
+  for (const type of ["enabled", "adaptive"]) {
+    for (const mode of ["connector_text", "thinking_and_connector_text", "none"]) {
+      expect(evaluate({ type }, { mode })?.display).toBe("summarized");
+      expect(evaluate({ type, display: "omitted" }, { mode })?.display).toBe("omitted");
+      expect(evaluate({ type, display: "summarized" }, { mode })?.display).toBe("summarized");
+      expect(evaluate({ type, display: "updates" }, { mode })?.display).toBe("updates");
+      expect(evaluate({ type, display: "highlights" }, { mode })?.display).toBe("omitted");
+      expect(evaluate({ type, display: "highlights" }, { mode, highlights: false })?.display).toBe("highlights");
+    }
+    expect(evaluate({ type }, { disabled: true })).toBeUndefined();
+    expect(evaluate({ type }, { supports: false })?.display).toBeUndefined();
+  }
+  expect(evaluate({ type: "disabled" })).toBeUndefined();
+  expect(patchResults.get("thinking-streaming")).toMatchObject({ candidates: 2, patched: 2 });
+  expect(patchContents([patched], { disable: disabledPatches }).contents[0]).toBe(patched);
+});
 
 for (const [eligibility, providerInHelper] of [
   ["enabled&&provider()&&supports(model)", false],
