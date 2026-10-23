@@ -365,7 +365,7 @@ function rebuildBunData(
       let bestRangeIndex = -1;
       for (let index = 0; index < freeBytecodeRanges.length; index += 1) {
         const range = freeBytecodeRanges[index];
-        if (range.length < content.length) {
+        if (range.length < content.length + 1) {
           continue;
         }
         if (bestRangeIndex === -1 || range.length < freeBytecodeRanges[bestRangeIndex].length) {
@@ -378,11 +378,13 @@ function rebuildBunData(
 
       const range = freeBytecodeRanges[bestRangeIndex];
       contentTarget = { offset: range.offset, length: content.length };
-      range.offset += content.length;
-      range.length -= content.length;
+      range.offset += content.length + 1;
+      range.length -= content.length + 1;
     }
 
     content.copy(rebuilt, contentTarget.offset);
+    // Bun requires a NUL terminator outside the recorded source length.
+    rebuilt[contentTarget.offset + content.length] = 0;
     const recordOffset = bunOffsets.modulesPtr.offset + moduleOffset;
     rebuilt.writeUInt32LE(contentTarget.offset, recordOffset + 8);
     rebuilt.writeUInt32LE(content.length, recordOffset + 12);

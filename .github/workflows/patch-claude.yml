@@ -60,6 +60,9 @@ jobs:
             patched_asset_name: claude.native.windows.patched.exe
             needs_codesign: false
             can_execute: true
+    concurrency:
+      group: patched-release-${{ matrix.release_suffix }}
+      cancel-in-progress: false
 
     steps:
       - name: Checkout repository
@@ -83,6 +86,10 @@ jobs:
           npm install
           VERSION="$(node -e "console.log(require('./node_modules/node-lief/package.json').version)")"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Test patch and updater logic
+        if: matrix.platform_label == 'macos-arm64'
+        run: bun test test/thinking-streaming.patch.test.ts test/patched-release-updater.test.ts test/patched-updater.patch.test.ts test/installer.test.ts
 
       - name: Download native binary
         id: native
@@ -149,6 +156,7 @@ jobs:
             else
               echo "Release ${BASE_TAG} already exists, skipping."
               echo "skip=true" >> "$GITHUB_OUTPUT"
+              echo "tag=$BASE_TAG" >> "$GITHUB_OUTPUT"
             fi
           else
             echo "skip=false" >> "$GITHUB_OUTPUT"
@@ -158,6 +166,9 @@ jobs:
 
       - name: Apply display patches to native binaries
         if: steps.check.outputs.skip != 'true'
+        env:
+          PATCH_CLAUDE_REPO: ${{ github.repository }}
+          PATCH_CLAUDE_RELEASE_TAG: ${{ steps.check.outputs.tag }}
         run: |
           set -euo pipefail
 
@@ -188,6 +199,12 @@ jobs:
           CLAUDE_NATIVE_BINARY: work/${{ matrix.patched_asset_name }}
         run: bun test test/live-thinking.integration.test.ts
 
+      - name: Test native patched updates without credentials
+        if: steps.check.outputs.skip != 'true' && matrix.platform_label == 'macos-arm64'
+        env:
+          CLAUDE_UPDATER_TEST_ORIGINAL: work/claude.native.original
+        run: bun test test/patched-updater.integration.test.ts
+
       - name: Write metadata
         if: steps.check.outputs.skip != 'true'
         run: |
@@ -196,6 +213,7 @@ jobs:
             echo "platform=${{ matrix.release_suffix }}"
             echo "native_install_script=https://claude.ai/install.sh"
             echo "native_version=${{ steps.native.outputs.version }}"
+            echo "patched_updater=1"
             echo "native_binary_path=${{ steps.native.outputs.path }}"
             echo "node_lief_version=${{ steps.dependencies.outputs.version }}"
             echo "run_id=${{ github.run_id }}"
@@ -219,3 +237,11 @@ jobs:
             --notes "Patched native Claude ${{ matrix.platform_label }} build with node-lief (version: ${{ steps.dependencies.outputs.version }}), source version \`${VERSION}\`" \
             work/metadata.txt \
             "$PATCHED_PATH"
+
+      - name: Publish platform update feed
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ steps.check.outputs.tag }}
+          RELEASE_PLATFORM: ${{ matrix.release_suffix }}
+        run: node scripts/publish-update-feed.js "$GH_REPO" "$RELEASE_TAG" "$RELEASE_PLATFORM"

@@ -3,7 +3,7 @@
 set -euo pipefail
 
 REPO_SLUG="${PATCH_CLAUDE_REPO:-a-connoisseur/patch-claude-code}"
-API_BASE_URL="https://api.github.com/repos/${REPO_SLUG}"
+RELEASE_BASE_URL="https://github.com/${REPO_SLUG}/releases/download"
 
 log() {
   printf '%s\n' "$*" >&2
@@ -100,102 +100,50 @@ EOF
   CLAUDE_PATH="$claude_path"
 }
 
-detect_installed_version() {
-  local version_output
-  version_output="$("$CLAUDE_PATH" --version 2>/dev/null || true)"
-
-  if [[ "$version_output" =~ ([0-9]+\.[0-9]+\.[0-9]+) ]]; then
-    CLAUDE_VERSION="${BASH_REMATCH[1]}"
-  else
-    fail "Could not parse Claude version from: ${version_output:-<empty>}"
-  fi
-}
-
-github_api_get() {
-  local url="$1"
-  local output_file="$2"
-
-  if [[ -n "${GITHUB_TOKEN:-}" ]]; then
-    curl -fsSL \
-      -H "Accept: application/vnd.github+json" \
-      -H "Authorization: Bearer ${GITHUB_TOKEN}" \
-      -H "User-Agent: patch-claude-code-installer" \
-      "$url" \
-      -o "$output_file"
-  elif [[ -n "${GH_TOKEN:-}" ]]; then
-    curl -fsSL \
-      -H "Accept: application/vnd.github+json" \
-      -H "Authorization: Bearer ${GH_TOKEN}" \
-      -H "User-Agent: patch-claude-code-installer" \
-      "$url" \
-      -o "$output_file"
-  else
-    curl -fsSL \
-      -H "Accept: application/vnd.github+json" \
-      -H "User-Agent: patch-claude-code-installer" \
-      "$url" \
-      -o "$output_file"
-  fi
-}
-
 fetch_release_metadata() {
   require_cmd curl
   require_cmd python3
 
-  local release_json_file release_metadata release_api_url expected_tag
+  local release_json_file release_metadata
   release_json_file="$(mktemp)" || fail "Failed to create temporary file for release metadata"
-  expected_tag="v${CLAUDE_VERSION}-${RELEASE_SUFFIX}"
-  release_api_url="${API_BASE_URL}/releases/tags/${expected_tag}"
-
-  github_api_get "$release_api_url" "$release_json_file" || {
+  if ! curl -fsSL "${RELEASE_BASE_URL}/patched-updates/${RELEASE_SUFFIX}.json" -o "$release_json_file"; then
     rm -f "$release_json_file"
-    fail "Could not find a patched release for Claude ${CLAUDE_VERSION} on ${RELEASE_SUFFIX}"
-  }
-
-  if [[ ! -s "$release_json_file" ]]; then
-    rm -f "$release_json_file"
-    fail "Failed to fetch release metadata"
+    fail "Could not find a patched update feed for ${RELEASE_SUFFIX}"
   fi
 
   release_metadata="$(
-    python3 - "$ASSET_NAME" "$release_json_file" <<'PY'
+    python3 - "$ASSET_NAME" "$RELEASE_SUFFIX" "$RELEASE_BASE_URL" "$release_json_file" <<'PYMETA'
 import json
+import re
 import sys
 
-asset_name = sys.argv[1]
-release_json_file = sys.argv[2]
-
-with open(release_json_file, encoding="utf-8") as handle:
+asset_name, platform, release_base, filename = sys.argv[1:]
+with open(filename, encoding="utf-8") as handle:
     release = json.load(handle)
-
-if not isinstance(release, dict):
-    raise SystemExit(1)
-
-tag = release.get("tag_name", "")
-if not tag:
-    raise SystemExit(1)
-
-for asset in release.get("assets", []):
-    if asset.get("name") == asset_name:
-        print(tag)
-        print(asset["browser_download_url"])
-        raise SystemExit(0)
-
-raise SystemExit(1)
-PY
+version = release.get("version", "")
+tag = release.get("tag", "")
+if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version):
+    raise SystemExit("Invalid patched release version")
+if not re.fullmatch(rf"v{re.escape(version)}-{re.escape(platform)}(?:-(?:[2-9]|[1-9][0-9]+))?", tag):
+    raise SystemExit("Invalid patched release tag")
+if (release.get("platform") != platform or release.get("assetName") != asset_name
+        or release.get("url") != f"{release_base}/{tag}/{asset_name}"
+        or not re.fullmatch(r"[a-f0-9]{64}", release.get("sha256", ""))
+        or not isinstance(release.get("size"), int) or release["size"] <= 0):
+    raise SystemExit("Invalid patched release metadata")
+for key in ("tag", "url", "sha256", "size", "version"):
+    print(release[key])
+PYMETA
   )" || {
     rm -f "$release_json_file"
-    fail "Could not find the ${ASSET_NAME} asset in release ${expected_tag}"
+    fail "Invalid patched update feed for ${RELEASE_SUFFIX}"
   }
-
   rm -f "$release_json_file"
-  RELEASE_METADATA="$release_metadata"
-
-  RELEASE_TAG="$(printf '%s\n' "$RELEASE_METADATA" | sed -n '1p')"
-  DOWNLOAD_URL="$(printf '%s\n' "$RELEASE_METADATA" | sed -n '2p')"
-
-  [[ -n "$RELEASE_TAG" ]] || fail "Failed to parse release tag"
-  [[ -n "$DOWNLOAD_URL" ]] || fail "Failed to parse download URL"
+  RELEASE_TAG="$(printf '%s\n' "$release_metadata" | sed -n '1p')"
+  DOWNLOAD_URL="$(printf '%s\n' "$release_metadata" | sed -n '2p')"
+  EXPECTED_CHECKSUM="$(printf '%s\n' "$release_metadata" | sed -n '3p')"
+  EXPECTED_SIZE="$(printf '%s\n' "$release_metadata" | sed -n '4p')"
+  CLAUDE_VERSION="$(printf '%s\n' "$release_metadata" | sed -n '5p')"
 }
 
 download_asset() {
@@ -206,7 +154,28 @@ download_asset() {
   DOWNLOADED_PATH="${tmpdir}/${ASSET_NAME}"
   log "Downloading ${ASSET_NAME} from ${RELEASE_TAG}"
   curl -fL "$DOWNLOAD_URL" -o "$DOWNLOADED_PATH"
+  python3 - "$DOWNLOADED_PATH" "$EXPECTED_CHECKSUM" "$EXPECTED_SIZE" <<'PYVERIFY'
+import hashlib
+import os
+import sys
+
+filename, expected_checksum, expected_size = sys.argv[1:]
+with open(filename, "rb") as handle:
+    checksum = hashlib.file_digest(handle, "sha256").hexdigest() if hasattr(hashlib, "file_digest") else None
+    if checksum is None:
+        handle.seek(0)
+        digest = hashlib.sha256()
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+        checksum = digest.hexdigest()
+if os.path.getsize(filename) != int(expected_size) or checksum != expected_checksum:
+    raise SystemExit("Patched download checksum mismatch; keeping the current installation")
+PYVERIFY
   chmod +x "$DOWNLOADED_PATH"
+  local version_output
+  version_output="$("$DOWNLOADED_PATH" --version)"
+  [[ "$version_output" == *"(patched)"* && "$version_output" =~ ([0-9]+\.[0-9]+\.[0-9]+) ]] || fail "Downloaded binary is not patched Claude"
+  [[ "${BASH_REMATCH[1]}" == "$CLAUDE_VERSION" ]] || fail "Downloaded binary has an unexpected version"
 }
 
 install_asset() {
@@ -264,7 +233,6 @@ verify_install() {
 main() {
   detect_platform
   find_existing_claude
-  detect_installed_version
   fetch_release_metadata
   download_asset
   install_asset

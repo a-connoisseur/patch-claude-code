@@ -2033,6 +2033,84 @@ function patchWelcomePatchedBadge(content) {
   };
 }
 
+function patchPatchedReleaseUpdater(content) {
+  const marker = "function __getPatchedClaudeUpdater()";
+  if (content.includes(marker)) return { content, candidates: 1, patched: 0 };
+  if (!content.includes('"https://downloads.claude.ai/claude-code-releases"')) {
+    return { content, candidates: 0, patched: 0 };
+  }
+  if (!content.includes('Checking for native installer update to version ${')) {
+    return { content, candidates: 0, patched: 0 };
+  }
+
+  const { Script } = require("node:vm");
+  function enclosingFunction(anchor) {
+    const anchorIndex = content.indexOf(anchor);
+    if (anchorIndex === -1 || content.indexOf(anchor, anchorIndex + anchor.length) !== -1) return null;
+    const start = content.lastIndexOf("async function ", anchorIndex);
+    if (start === -1) return null;
+    const header = content.slice(start).match(/^async function ([A-Za-z_$][\w$]*)\(([^)]*)\)\{/);
+    if (!header) return null;
+    // Parsing candidate boundaries handles braces inside strings, templates, and regex literals.
+    let end = content.indexOf("}", anchorIndex);
+    while (end !== -1 && end - start < 30000) {
+      const source = content.slice(start, end + 1);
+      try {
+        new Script(`(${source})`);
+        return { start, end: end + 1, source, header: header[0], args: header[2], name: header[1] };
+      } catch {}
+      end = content.indexOf("}", end + 1);
+    }
+    return null;
+  }
+
+  const version = enclosingFunction('"Test-fixture version rejected outside test builds"');
+  const download = enclosingFunction('return{downloadType:"binary",signatureVerified:');
+  const verify = enclosingFunction('purpose:"reverify"');
+  const update = enclosingFunction('Checking for native installer update to version ${');
+  if (!version || !download || !verify || !update) {
+    return { content, candidates: 1, patched: 0 };
+  }
+  const platform = verify.source.match(/let [A-Za-z_$][\w$]*=([A-Za-z_$][\w$]*)\(\),\{manifest:/)?.[1];
+  const install = update.source.match(/await ([A-Za-z_$][\w$]*)\([A-Za-z_$][\w$]*,\{forceReinstall:/)?.[1];
+  const currentVersion = update.source.match(/VERSION:"(\d+\.\d+\.\d+)"/)?.[1];
+  const policy = update.source.match(/\{maxVersion:[A-Za-z_$][\w$]*,forceDowngradeEnabled:[A-Za-z_$][\w$]*\}=await ([A-Za-z_$][\w$]*)\(\)/)?.[1];
+  const belowMinimum = update.source.match(/if\(![A-Za-z_$][\w$]*&&([A-Za-z_$][\w$]*)\([A-Za-z_$][\w$]*\)\)return [^;]*tengu_native_update_skipped_minimum_version/)?.[1];
+  if (!platform || !install || !currentVersion || !policy || !belowMinimum) {
+    return { content, candidates: 1, patched: 0 };
+  }
+  const methods = [[version, "version", 1], [download, "download", 2], [verify, "verify", 2], [update, "update", 2]];
+  let output = content;
+  for (const [target, method, count] of methods.sort((a, b) => b[0].start - a[0].start)) {
+    const args = target.args.split(",").slice(0, count).map((arg) => arg.split("=")[0]);
+    if (args.some((arg) => !/^[A-Za-z_$][\w$]*$/.test(arg))) {
+      return { content, candidates: 1, patched: 0 };
+    }
+    const replacement = `${target.header}return (await __getPatchedClaudeUpdater()).${method}(${args.join(",")})}`;
+    output = output.slice(0, target.start) + replacement + output.slice(target.end);
+  }
+  const { createPatchedReleaseUpdater } = require("./scripts/patched-release-updater.js");
+  const config = JSON.stringify({
+    currentVersion,
+    repo: process.env.PATCH_CLAUDE_REPO || "a-connoisseur/patch-claude-code",
+    releaseTag: process.env.PATCH_CLAUDE_RELEASE_TAG,
+    releaseBase: process.env.PATCH_CLAUDE_RELEASE_BASE,
+    apiBase: process.env.PATCH_CLAUDE_API_BASE,
+  });
+  output += `\nvar __patchedClaudeUpdater;${marker}{return __patchedClaudeUpdater??=import("node:module").then(({createRequire})=>(\n${createPatchedReleaseUpdater.toString()}\n)({...${config},platform:${platform},install:${install},policy:${policy},belowMinimum:${belowMinimum}},createRequire(process.execPath)))}\n`;
+  return { content: output, candidates: 1, patched: 1 };
+}
+
+function patchPatchedUpdateMessage(content) {
+  if (!content.includes("Failed to install native update")) return { content, candidates: 0, patched: 0 };
+  let patched = 0;
+  const output = content.replace(
+    /if\(([A-Za-z_$][\w$]*)\.wasUpdated&&\1\.latestVersion!==\{[^{}]{0,2500}\}\.VERSION\)/g,
+    (full, result) => { patched += 1; return `if(${result}.wasUpdated)`; }
+  );
+  return { content: output, candidates: patched, patched };
+}
+
 const PATCH_MODULES = [
   {
     id: "tool-call-verbose",
@@ -2088,6 +2166,16 @@ const PATCH_MODULES = [
     id: "welcome-badge",
     description: "Rename startup and help Claude Code titles to Connoisseur's Code",
     apply: patchWelcomePatchedBadge,
+  },
+  {
+    id: "patched-release-updater",
+    description: "Use verified patched releases for automatic and manual native updates",
+    apply: patchPatchedReleaseUpdater,
+  },
+  {
+    id: "patched-update-message",
+    description: "Report installed patch revisions in manual update output",
+    apply: patchPatchedUpdateMessage,
   },
 ];
 

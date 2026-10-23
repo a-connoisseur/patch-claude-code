@@ -24,6 +24,7 @@ The current flow is:
 5. Use `scripts/native-bun.ts` to rebuild the module table with the changed module contents replaced and their stale Bun bytecode removed.
 6. Re-sign on macOS.
 7. Publish the patched binary.
+8. Publish the platform update feed after the release asset has a SHA-256 digest.
 
 The important consequence: almost all real behavior lives in `patch-claude-display.ts`. If a release regresses, that file is usually where the fix belongs.
 
@@ -36,6 +37,8 @@ The important consequence: almost all real behavior lives in `patch-claude-displ
 - `.github/workflows/patch-claude.yml`: CI download, patch, sign, release path
 - `install-patched-claude.sh`: installer that resolves release tags and downloads patched assets
 - `install-patched-claude.ps1`: Windows installer that resolves release tags and downloads patched assets
+- `scripts/patched-release-updater.js`: runtime updater embedded into the patched native updater module
+- `scripts/publish-update-feed.js`: release metadata validation and platform update feed publication
 
 ## How The Patcher Is Structured
 
@@ -448,6 +451,53 @@ Likely break signs:
 - some screens show patched branding while others revert to upstream naming
 - candidate counts change unevenly because only some string shapes moved
 
+### `patched-release-updater`
+
+Intent:
+
+- use patched releases for automatic updates, `claude update`, and explicit native version installation
+- retain the current build if a newer patched release is unavailable
+- verify the published SHA-256 digest and patched version marker before installation
+- accept a newer patch revision for the same Claude version
+
+The matcher identifies four native updater functions by their semantic anchors:
+
+- the channel resolver contains `Test-fixture version rejected outside test builds`
+- the binary download wrapper returns `downloadType:"binary"` and `signatureVerified`
+- the retained binary verifier requests the manifest with `purpose:"reverify"`
+- the update coordinator logs `Checking for native installer update to version`
+
+The matcher parses candidate function boundaries with Node's JavaScript parser.
+It discovers the platform, install, and version policy helpers from their call shapes.
+It replaces all four functions together and embeds `scripts/patched-release-updater.js` in that module.
+If any required shape is absent, native patch coverage rejects the build.
+
+The runtime uses the native install helper for staging, atomic replacement, and launcher activation.
+The upstream `signatureVerified` field records successful verification of the GitHub asset's SHA-256 digest in this path.
+The runtime does not request Anthropic manifests or use canary version overrides.
+Version policies still restrict updates.
+
+The `patched-updates` prerelease holds one JSON asset per platform, such as `macos-arm64.json`.
+Each asset identifies the release tag, source version, platform, binary URL, size, and SHA-256 digest.
+Both installers read this feed, so installation does not depend on the currently installed upstream version.
+Both upstream channels resolve to this feed because the repository publishes one patched channel.
+
+CI embeds `PATCH_CLAUDE_REPO` and `PATCH_CLAUDE_RELEASE_TAG` in the binary before publication.
+The release tag identifies revisions such as `v2.1.309-macos-arm64-2`.
+The publisher advances each platform feed by version and revision, and never moves it backward.
+The `metadata.txt` asset identifies releases that include the patched updater.
+Older releases and custom tags do not advance the feed.
+
+For local integration tests, `PATCH_CLAUDE_RELEASE_BASE` and `PATCH_CLAUDE_API_BASE` override the embedded endpoints at patch time.
+These variables do not change endpoints in an already patched binary.
+
+Likely break signs:
+
+- the new patch reports zero changes despite the native updater module still being present
+- `claude update` requests an Anthropic manifest
+- an incomplete release advances the platform feed
+- a failed checksum changes the installed launcher
+
 ## Updating A Broken Patch
 
 When a Claude update breaks a patch, do this in order.
@@ -504,6 +554,19 @@ node patch-claude-display.ts --file ./content.js --dry-run
 ## CI Validation
 
 The workflow asserts the `(patched)` version marker by running native-architecture builds and re-extracting cross-architecture builds. That proves the rewritten bundle was packed into the release binary, but it does not prove every UI patch still behaves correctly.
+
+The updater unit tests cover release selection, platform isolation, revision ordering, version policies, and download verification.
+The native updater integration test uses a local release server and an isolated temporary installation.
+Run it with a freshly downloaded original binary:
+
+```bash
+CLAUDE_UPDATER_TEST_ORIGINAL=work/claude.native.original bun test test/patched-updater.integration.test.ts
+```
+
+The native updater test currently runs on macOS arm64.
+It verifies a successful update, checksum rejection, and an unavailable update feed without accessing the installed Claude binary.
+The writer reserves a NUL terminator outside each replacement source range.
+Claude 2.1.309 rejects unterminated ranges before it loads the entry module.
 
 When investigating release correctness, treat these as strong signals, in order:
 

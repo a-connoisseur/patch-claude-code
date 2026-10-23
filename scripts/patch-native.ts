@@ -41,6 +41,8 @@ const REQUIRED_PATCH_IDS = [
   "disable-spinner-tips",
   "version-output",
   "welcome-badge",
+  "patched-release-updater",
+  "patched-update-message",
 ] as const;
 
 type DisplayPatcher = {

@@ -41,7 +41,7 @@ function Get-GitHubHeaders {
 
 $releaseSuffix = Get-ReleaseSuffix
 $assetName = "claude.native.windows.patched.exe"
-$apiBaseUrl = "https://api.github.com/repos/$RepoSlug"
+$releaseBaseUrl = "https://github.com/$RepoSlug/releases/download"
 
 $claudeCommand = Get-Command claude -ErrorAction SilentlyContinue | Select-Object -First 1
 if (-not $claudeCommand) {
@@ -53,32 +53,38 @@ if (-not $claudePath) {
   Fail "Could not resolve the installed Claude executable path."
 }
 
-$versionOutput = & $claudePath --version 2>$null
-if ($versionOutput -notmatch "([0-9]+\.[0-9]+\.[0-9]+)") {
-  Fail "Could not parse Claude version from: $versionOutput"
-}
-
-$claudeVersion = $Matches[1]
-$releaseTag = "v$claudeVersion-$releaseSuffix"
 $headers = Get-GitHubHeaders
-$releaseApiUrl = "$apiBaseUrl/releases/tags/$releaseTag"
-
+$feedUrl = "$releaseBaseUrl/patched-updates/$releaseSuffix.json"
 try {
-  $release = Invoke-RestMethod -Uri $releaseApiUrl -Headers $headers
+  $release = Invoke-RestMethod -Uri $feedUrl -Headers $headers
 } catch {
-  Fail "Could not find a patched release for Claude $claudeVersion on $releaseSuffix"
+  Fail "Could not find a patched update feed for $releaseSuffix"
 }
-
-$asset = $release.assets | Where-Object { $_.name -eq $assetName } | Select-Object -First 1
-if (-not $asset) {
-  Fail "Could not find the $assetName asset in release $releaseTag"
+$claudeVersion = $release.version
+$releaseTag = $release.tag
+$tagPattern = "^v$([regex]::Escape($claudeVersion))-$releaseSuffix(?:-(?:[2-9]|[1-9][0-9]+))?$"
+if ($claudeVersion -notmatch "^[0-9]+\.[0-9]+\.[0-9]+$" -or $releaseTag -notmatch $tagPattern -or
+    $release.platform -ne $releaseSuffix -or $release.assetName -ne $assetName -or
+    $release.url -ne "$releaseBaseUrl/$releaseTag/$assetName" -or
+    $release.sha256 -notmatch "^[a-f0-9]{64}$" -or $release.size -le 0) {
+  Fail "Invalid patched update feed for $releaseSuffix"
 }
 
 $tmpDir = New-Item -ItemType Directory -Path (Join-Path ([System.IO.Path]::GetTempPath()) ([guid]::NewGuid().ToString()))
 try {
   $downloadedPath = Join-Path $tmpDir.FullName $assetName
   Write-Host "Downloading $assetName from $releaseTag"
-  Invoke-WebRequest -Uri $asset.browser_download_url -Headers $headers -OutFile $downloadedPath
+  Invoke-WebRequest -Uri $release.url -OutFile $downloadedPath
+  $checksum = (Get-FileHash -LiteralPath $downloadedPath -Algorithm SHA256).Hash.ToLowerInvariant()
+  if ($checksum -ne $release.sha256 -or (Get-Item -LiteralPath $downloadedPath).Length -ne $release.size) {
+    Fail "Patched download checksum mismatch; keeping the current installation"
+  }
+  $versionOutput = (& $downloadedPath --version) -join "`n"
+  $reportedVersion = [regex]::Match($versionOutput, "[0-9]+\.[0-9]+\.[0-9]+").Value
+  if ($LASTEXITCODE -ne 0 -or $versionOutput -notmatch "\(patched\)" -or
+      $reportedVersion -ne $claudeVersion) {
+    Fail "Downloaded binary does not identify as the expected patched Claude version"
+  }
 
   Copy-Item -LiteralPath $downloadedPath -Destination $claudePath -Force
 
