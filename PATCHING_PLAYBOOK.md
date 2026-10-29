@@ -22,6 +22,7 @@ The current flow is:
 3. Select every embedded JavaScript module, including the CLI entry module and split chunks.
 4. Run `patch-claude-display.ts` across those modules and aggregate the patch counts.
 5. Use `scripts/native-bun.ts` to rebuild the module table with the changed module contents replaced and their stale Bun bytecode removed.
+   A grown module reuses its old bytecode range only when no other module's bytecode overlaps it; otherwise it is appended to the Bun data. Bun 1.4 builds keep all bytecode in one shared block where every range runs to the end of the block, so writing into a range there corrupts other modules' bytecode and JSC crashes while decoding it.
 6. Re-sign on macOS.
 7. Publish the patched binary.
 8. Publish the platform update feed after the release asset has a SHA-256 digest.

@@ -353,14 +353,41 @@ function rebuildBunData(
     }
   }
 
-  // Preserve Bun data that is not referenced by the module table and reuse only
-  // bytecode ranges whose records are cleared below.
-  const freeBytecodeRanges = replacements
+  // A replaced module's bytecode range can hold its patched source only when no other
+  // module's bytecode overlaps that range. Older Bun builds give every module an exact,
+  // disjoint bytecode range. Bun 1.4 builds store all bytecode in one shared block: each
+  // record's range starts at that module's cache and runs to the end of the block, and
+  // lazily decoded function code blocks can live anywhere after the start. Writing into
+  // such a range overwrites live bytecode of other modules, and JSC crashes while
+  // decoding it (CachedTypes.cpp). Sources that do not fit are appended to the Bun data.
+  const replacedModuleOffsets = new Set(replacements.map(({ moduleOffset }) => moduleOffset));
+  const otherBytecodeRanges: Range[] = [];
+  for (let index = 0; index < moduleCount; index += 1) {
+    const moduleOffset = index * moduleStructSize;
+    if (replacedModuleOffsets.has(moduleOffset)) {
+      continue;
+    }
+    const { bytecode } = readBunModule(moduleTable, moduleOffset, moduleStructSize);
+    if (bytecode.length > 0) {
+      otherBytecodeRanges.push(bytecode);
+    }
+  }
+  const candidateRanges = replacements
     .map(({ moduleRecord }) => ({ ...moduleRecord.bytecode }))
     .filter((range) => range.length > 0);
+  const freeBytecodeRanges = candidateRanges.filter(
+    (range) =>
+      !otherBytecodeRanges.some((other) => rangesOverlap(range, other)) &&
+      !candidateRanges.some((other) => other !== range && rangesOverlap(range, other))
+  );
+
+  const offsetsOffset = bunData.length - BUN_TRAILER.length - 32;
+  const appendedChunks: Buffer[] = [];
+  let appendedLength = 0;
 
   for (const { moduleName, moduleOffset, moduleRecord, content } of replacements) {
     let contentTarget = moduleRecord.contents;
+    let appended = false;
     if (content.length > contentTarget.length) {
       let bestRangeIndex = -1;
       for (let index = 0; index < freeBytecodeRanges.length; index += 1) {
@@ -372,19 +399,35 @@ function rebuildBunData(
           bestRangeIndex = index;
         }
       }
-      if (bestRangeIndex === -1) {
-        throw new Error(`No freed bytecode slot can hold patched module ${moduleName}`);
-      }
 
-      const range = freeBytecodeRanges[bestRangeIndex];
-      contentTarget = { offset: range.offset, length: content.length };
-      range.offset += content.length + 1;
-      range.length -= content.length + 1;
+      if (bestRangeIndex === -1) {
+        contentTarget = { offset: offsetsOffset + appendedLength, length: content.length };
+        appended = true;
+      } else {
+        const range = freeBytecodeRanges[bestRangeIndex];
+        contentTarget = { offset: range.offset, length: content.length };
+        range.offset += content.length + 1;
+        range.length -= content.length + 1;
+      }
     }
 
-    content.copy(rebuilt, contentTarget.offset);
-    // Bun requires a NUL terminator outside the recorded source length.
-    rebuilt[contentTarget.offset + content.length] = 0;
+    if (appended) {
+      // Bun requires a NUL terminator outside the recorded source length.
+      const paddedLength = alignTo(content.length + 1, 8);
+      const chunk = Buffer.alloc(paddedLength);
+      content.copy(chunk, 0);
+      appendedChunks.push(chunk);
+      appendedLength += paddedLength;
+    } else {
+      content.copy(rebuilt, contentTarget.offset);
+      // Bun requires a NUL terminator outside the recorded source length.
+      rebuilt[contentTarget.offset + content.length] = 0;
+    }
+
+    if (contentTarget.offset + contentTarget.length + 1 > 0xffffffff) {
+      throw new Error(`Patched module ${moduleName} does not fit in 32-bit Bun offsets`);
+    }
+
     const recordOffset = bunOffsets.modulesPtr.offset + moduleOffset;
     rebuilt.writeUInt32LE(contentTarget.offset, recordOffset + 8);
     rebuilt.writeUInt32LE(content.length, recordOffset + 12);
@@ -397,7 +440,27 @@ function rebuildBunData(
     }
   }
 
-  return rebuilt;
+  if (appendedLength === 0) {
+    return rebuilt;
+  }
+
+  // Appended sources sit between the module data and the offsets struct; byteCount is the
+  // length of the data in front of the offsets struct.
+  const grown = Buffer.concat([
+    rebuilt.subarray(0, offsetsOffset),
+    ...appendedChunks,
+    rebuilt.subarray(offsetsOffset),
+  ]);
+  grown.writeBigUInt64LE(bunOffsets.byteCount + BigInt(appendedLength), offsetsOffset + appendedLength);
+  return grown;
+}
+
+function rangesOverlap(left: Range, right: Range): boolean {
+  return left.offset < right.offset + right.length && right.offset < left.offset + left.length;
+}
+
+function alignTo(value: number, alignment: number): number {
+  return Math.ceil(value / alignment) * alignment;
 }
 
 function wrapSectionBunData(bunData: Buffer, sectionHeaderSize: 4 | 8): Buffer {
@@ -1057,6 +1120,7 @@ function writeNativeBunModules(
 }
 
 module.exports = {
+  rebuildBunData,
   canNativeBunHandle,
   readNativeBunContent,
   readNativeBunModules,
