@@ -89,7 +89,7 @@ jobs:
 
       - name: Test patch and updater logic
         if: matrix.platform_label == 'macos-arm64'
-        run: bun test test/thinking-streaming.patch.test.ts test/patched-release-updater.test.ts test/patched-updater.patch.test.ts test/installer.test.ts
+        run: bun test test/native-bun.test.ts test/thinking-streaming.patch.test.ts test/patched-release-updater.test.ts test/patched-updater.patch.test.ts test/installer.test.ts
 
       - name: Download native binary
         id: native

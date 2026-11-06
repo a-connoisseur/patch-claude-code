@@ -195,17 +195,17 @@ async function patchNativeBinary(opts: PatchOptions): Promise<void> {
   validatePatchCoverage(result.patchResults, new Set(opts.disable));
 
   const replacements = new Map<string, string>();
-  let replacedBytecodeBytes = 0;
+  let clearedBytecodeRecords = 0;
   for (let index = 0; index < javaScriptModules.length; index += 1) {
     if (result.contents[index] !== javaScriptModules[index].content) {
       replacements.set(javaScriptModules[index].name, result.contents[index]);
-      replacedBytecodeBytes += javaScriptModules[index].bytecodeLength;
+      if (javaScriptModules[index].bytecodeLength > 0) clearedBytecodeRecords += 1;
     }
   }
 
   if (opts.dryRun) {
     console.log(
-      `Dry run complete. ${replacements.size} native module(s) would change and ${formatBytes(replacedBytecodeBytes)} of stale bytecode would be dropped.`
+      `Dry run complete. ${replacements.size} native module(s) would change and ${clearedBytecodeRecords} stale bytecode record(s) would be cleared.`
     );
     return;
   }
@@ -219,7 +219,7 @@ async function patchNativeBinary(opts: PatchOptions): Promise<void> {
     nativeBun.writeNativeBunModules(outputPath, replacements);
   }
   console.log(
-    `Patched ${replacements.size} native module(s), dropped ${formatBytes(replacedBytecodeBytes)} of stale bytecode: ${outputPath}`
+    `Patched ${replacements.size} native module(s), cleared ${clearedBytecodeRecords} stale bytecode record(s): ${outputPath}`
   );
 }
 
@@ -236,12 +236,6 @@ function validatePatchCoverage(
       `Required patches matched nothing: ${missing.join(", ")}. Refusing to write a partially patched binary.`
     );
   }
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KiB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`;
 }
 
 function errorMessage(error: unknown): string {

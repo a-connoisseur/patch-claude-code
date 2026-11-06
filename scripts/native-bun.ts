@@ -330,9 +330,7 @@ function rebuildBunData(
 ): Buffer {
   const moduleTable = sliceRange(bunData, bunOffsets.modulesPtr);
   const moduleCount = Math.floor(moduleTable.length / moduleStructSize);
-  const rebuilt = Buffer.from(bunData);
   const replacements: Array<{
-    moduleName: string;
     moduleOffset: number;
     moduleRecord: BunModule;
     content: Buffer;
@@ -345,7 +343,6 @@ function rebuildBunData(
     const replacement = replacementContents.get(moduleName);
     if (replacement !== undefined) {
       replacements.push({
-        moduleName,
         moduleOffset,
         moduleRecord,
         content: replacement,
@@ -353,33 +350,27 @@ function rebuildBunData(
     }
   }
 
-  // Preserve Bun data that is not referenced by the module table and reuse only
-  // bytecode ranges whose records are cleared below.
-  const freeBytecodeRanges = replacements
-    .map(({ moduleRecord }) => ({ ...moduleRecord.bytecode }))
-    .filter((range) => range.length > 0);
+  // Bytecode ranges can overlap other modules' bytecode, even after their own
+  // records are cleared. Append growing sources instead of reusing those ranges.
+  const growth = replacements.reduce(
+    (sum, { moduleRecord, content }) => sum + (content.length > moduleRecord.contents.length ? content.length + 1 : 0),
+    0
+  );
+  const footerOffset = bunData.length - 32 - BUN_TRAILER.length;
+  if (footerOffset + growth > 0xffffffff) {
+    throw new Error("Patched Bun data exceeds the 32-bit module offset limit");
+  }
+  const rebuilt = Buffer.alloc(bunData.length + growth);
+  bunData.copy(rebuilt, 0, 0, footerOffset);
+  bunData.copy(rebuilt, footerOffset + growth, footerOffset);
+  rebuilt.writeBigUInt64LE(bunOffsets.byteCount + BigInt(growth), footerOffset + growth);
+  let nextContentOffset = footerOffset;
 
-  for (const { moduleName, moduleOffset, moduleRecord, content } of replacements) {
+  for (const { moduleOffset, moduleRecord, content } of replacements) {
     let contentTarget = moduleRecord.contents;
     if (content.length > contentTarget.length) {
-      let bestRangeIndex = -1;
-      for (let index = 0; index < freeBytecodeRanges.length; index += 1) {
-        const range = freeBytecodeRanges[index];
-        if (range.length < content.length + 1) {
-          continue;
-        }
-        if (bestRangeIndex === -1 || range.length < freeBytecodeRanges[bestRangeIndex].length) {
-          bestRangeIndex = index;
-        }
-      }
-      if (bestRangeIndex === -1) {
-        throw new Error(`No freed bytecode slot can hold patched module ${moduleName}`);
-      }
-
-      const range = freeBytecodeRanges[bestRangeIndex];
-      contentTarget = { offset: range.offset, length: content.length };
-      range.offset += content.length + 1;
-      range.length -= content.length + 1;
+      contentTarget = { offset: nextContentOffset, length: content.length };
+      nextContentOffset += content.length + 1;
     }
 
     content.copy(rebuilt, contentTarget.offset);
@@ -1057,6 +1048,7 @@ function writeNativeBunModules(
 }
 
 module.exports = {
+  rebuildBunData,
   canNativeBunHandle,
   readNativeBunContent,
   readNativeBunModules,

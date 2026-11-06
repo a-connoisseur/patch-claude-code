@@ -80,7 +80,7 @@ Important behavior:
 - a nonzero source patch count is not sufficient by itself: Bun can execute a module's embedded bytecode instead of its source
 - when a module's source changes, the writer removes its bytecode and bytecode origin path so Bun recompiles the patched source
 - the writer preserves the rest of the Bun payload at its original offsets; 2.1.250 includes runtime data that is not referenced by the module table, so compacting only the known module ranges produces a startup crash
-- if changed source outgrows its original source range, the writer allocates it from bytecode storage freed by any changed module
+- if changed source outgrows its original source range, the writer appends it before the Bun footer. Bytecode ranges can overlap other modules' bytecode, so clearing a record does not make its storage safe to reuse.
 - if a required patch matches nothing, the script fails before copying or rewriting the output binary
 - 2.1.233 names the entry module `/$bunfs/root/cli` on macOS/Linux and `B:/~BUN/root/cli` on Windows, so entry detection recognizes the stable `/root/cli` suffix in addition to older Claude entry names
 - 2.1.245 splits the application across more than a thousand `chunk-*.js` modules. Its `/root/cli` entry is only a small loader, so entry-module-only extraction produces misleading zero counts for UI patches.
